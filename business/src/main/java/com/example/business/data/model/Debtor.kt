@@ -22,6 +22,8 @@ data class Debtor(
     val totalDebt: Double,
     val creditLimit: Double = 5000.0,
     val dueDate: String,
+    val debtStartDate: String = "15.09.2026", // Borcun yaranma tarixi
+    val invoiceNumber: String = "QM-2026-089",
     val status: DebtStatus,
     val lastPaymentDate: String? = null,
     val lastPaymentAmount: Double? = null,

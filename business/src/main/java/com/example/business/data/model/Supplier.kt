@@ -16,6 +16,7 @@ data class Supplier(
     val phone: String,
     val email: String? = null,
     val totalPayable: Double, // Verəcək borc
+    val debtStartDate: String = "10.09.2026", // Borcun yaranma tarixi
     val category: String, // Qida, İçki, Qablaşdırma, Xammal və s.
     val lastDeliveryDate: String,
     val invoices: List<SupplierInvoice> = emptyList()

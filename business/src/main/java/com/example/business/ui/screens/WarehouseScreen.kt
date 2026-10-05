@@ -37,6 +37,9 @@ fun WarehouseScreen(
     val items by viewModel.warehouseItems.collectAsState()
     val summary by viewModel.warehouseSummary.collectAsState()
     val searchQuery by viewModel.warehouseSearchQuery.collectAsState()
+    val hideNegativeStock by viewModel.hideNegativeStock.collectAsState()
+    val hideZeroStock by viewModel.hideZeroStock.collectAsState()
+    val onlyLowStock by viewModel.onlyLowStock.collectAsState()
     val context = LocalContext.current
 
     var selectedItemForStockEdit by remember { mutableStateOf<WarehouseItem?>(null) }
@@ -190,6 +193,49 @@ fun WarehouseScreen(
                     shape = RoundedCornerShape(14.dp),
                     singleLine = true
                 )
+            }
+
+            // 3.1 Filters: Hide Negative, Hide Zero, Low Stock
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = hideNegativeStock,
+                        onClick = { viewModel.hideNegativeStock.value = !hideNegativeStock },
+                        label = { Text("Mənfiləri Gizlət", fontSize = 11.sp) },
+                        leadingIcon = if (hideNegativeStock) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        } else null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = EmeraldPrimary.copy(alpha = 0.18f),
+                            selectedLabelColor = EmeraldPrimary
+                        )
+                    )
+
+                    FilterChip(
+                        selected = hideZeroStock,
+                        onClick = { viewModel.hideZeroStock.value = !hideZeroStock },
+                        label = { Text("0 Qalıqları Gizlət", fontSize = 11.sp) },
+                        leadingIcon = if (hideZeroStock) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        } else null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = EmeraldPrimary.copy(alpha = 0.18f),
+                            selectedLabelColor = EmeraldPrimary
+                        )
+                    )
+
+                    FilterChip(
+                        selected = onlyLowStock,
+                        onClick = { viewModel.onlyLowStock.value = !onlyLowStock },
+                        label = { Text("Kritik Qalıq", fontSize = 11.sp) },
+                        leadingIcon = if (onlyLowStock) {
+                            { Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(14.dp), tint = WarningOrange) }
+                        } else null
+                    )
+                }
             }
 
             // 4. Products List

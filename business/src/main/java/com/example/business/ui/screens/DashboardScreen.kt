@@ -31,6 +31,7 @@ fun DashboardScreen(
     onNavigateToSuppliers: () -> Unit,
     onNavigateToReports: () -> Unit,
     onNavigateToChat: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val summary by viewModel.summary.collectAsState()
@@ -74,6 +75,13 @@ fun DashboardScreen(
                             imageVector = Icons.Default.Storefront,
                             contentDescription = "Obyekt seçimi",
                             tint = EmeraldPrimary
+                        )
+                    }
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Tənzimləmələr",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     IconButton(onClick = { viewModel.lockApp() }) {

@@ -32,7 +32,8 @@ enum class ActiveScreen {
     MAIN_TABS,
     ADD_PRODUCT,
     ADD_DEBTOR,
-    ADD_SUPPLIER
+    ADD_SUPPLIER,
+    SETTINGS
 }
 
 class MainActivity : FragmentActivity() {
@@ -122,6 +123,12 @@ fun BusinessAppRoot(viewModel: BusinessViewModel) {
                         onNavigateBack = { activeSubScreen = ActiveScreen.MAIN_TABS }
                     )
                 }
+                ActiveScreen.SETTINGS -> {
+                    SettingsScreen(
+                        viewModel = viewModel,
+                        onNavigateBack = { activeSubScreen = ActiveScreen.MAIN_TABS }
+                    )
+                }
                 ActiveScreen.MAIN_TABS -> {
                     var currentTab by rememberSaveable { mutableStateOf(BusinessNavTab.DASHBOARD) }
                     val channels by viewModel.channels.collectAsState()
@@ -155,10 +162,11 @@ fun BusinessAppRoot(viewModel: BusinessViewModel) {
                             when (currentTab) {
                                 BusinessNavTab.DASHBOARD -> DashboardScreen(
                                     viewModel = viewModel,
-                                    onNavigateToDebtors = { currentTab = BusinessNavTab.DEBTORS },
-                                    onNavigateToSuppliers = { currentTab = BusinessNavTab.SUPPLIERS },
+                                    onNavigateToDebtors = { currentTab = BusinessNavTab.PARTNERS },
+                                    onNavigateToSuppliers = { currentTab = BusinessNavTab.PARTNERS },
                                     onNavigateToReports = { currentTab = BusinessNavTab.REPORTS },
                                     onNavigateToChat = { currentTab = BusinessNavTab.CHAT },
+                                    onNavigateToSettings = { activeSubScreen = ActiveScreen.SETTINGS },
                                     modifier = Modifier.padding(innerPadding)
                                 )
                                 BusinessNavTab.WAREHOUSE -> WarehouseScreen(
@@ -166,13 +174,9 @@ fun BusinessAppRoot(viewModel: BusinessViewModel) {
                                     onNavigateToAddProduct = { activeSubScreen = ActiveScreen.ADD_PRODUCT },
                                     modifier = Modifier.padding(innerPadding)
                                 )
-                                BusinessNavTab.DEBTORS -> DebtorsScreen(
+                                BusinessNavTab.PARTNERS -> PartnersScreen(
                                     viewModel = viewModel,
                                     onNavigateToAddDebtor = { activeSubScreen = ActiveScreen.ADD_DEBTOR },
-                                    modifier = Modifier.padding(innerPadding)
-                                )
-                                BusinessNavTab.SUPPLIERS -> SuppliersScreen(
-                                    viewModel = viewModel,
                                     onNavigateToAddSupplier = { activeSubScreen = ActiveScreen.ADD_SUPPLIER },
                                     modifier = Modifier.padding(innerPadding)
                                 )
@@ -181,10 +185,6 @@ fun BusinessAppRoot(viewModel: BusinessViewModel) {
                                     modifier = Modifier.padding(innerPadding)
                                 )
                                 BusinessNavTab.CHAT -> ChatScreen(
-                                    viewModel = viewModel,
-                                    modifier = Modifier.padding(innerPadding)
-                                )
-                                BusinessNavTab.SETTINGS -> SettingsScreen(
                                     viewModel = viewModel,
                                     modifier = Modifier.padding(innerPadding)
                                 )
@@ -203,9 +203,7 @@ enum class BusinessNavTab(
 ) {
     DASHBOARD("İcmal", Icons.Default.Dashboard),
     WAREHOUSE("Anbar", Icons.Default.Inventory2),
-    DEBTORS("Debitorlar", Icons.Default.People),
-    SUPPLIERS("Təchizatçılar", Icons.Default.LocalShipping),
+    PARTNERS("Tərəfdaşlar", Icons.Default.PeopleAlt),
     REPORTS("Hesabatlar", Icons.Default.BarChart),
-    CHAT("Daxili Çat", Icons.Default.Forum),
-    SETTINGS("Tənzimləmə", Icons.Default.Settings)
+    CHAT("Daxili Çat", Icons.Default.Forum)
 }

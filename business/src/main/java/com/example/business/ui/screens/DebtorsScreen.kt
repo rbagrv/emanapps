@@ -43,6 +43,7 @@ fun DebtorsScreen(
 
     var selectedDebtorForPayment by remember { mutableStateOf<Debtor?>(null) }
     var selectedDebtorForDetails by remember { mutableStateOf<Debtor?>(null) }
+    var selectedDebtorForDebtOrigin by remember { mutableStateOf<Debtor?>(null) }
 
     Scaffold(
         topBar = {
@@ -208,6 +209,7 @@ fun DebtorsScreen(
                         DebtorCard(
                             debtor = debtor,
                             onCardClick = { selectedDebtorForDetails = debtor },
+                            onDebtClick = { selectedDebtorForDebtOrigin = debtor },
                             onPayClick = { selectedDebtorForPayment = debtor },
                             onCallClick = {
                                 val intent = Intent(Intent.ACTION_DIAL).apply {
@@ -288,6 +290,82 @@ fun DebtorsScreen(
         )
     }
 
+    // DEBT ORIGIN DATE DIALOG
+    selectedDebtorForDebtOrigin?.let { debtor ->
+        AlertDialog(
+            onDismissRequest = { selectedDebtorForDebtOrigin = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Event,
+                    contentDescription = null,
+                    tint = EmeraldPrimary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Borcun Yaranma Tarixi & Faktura",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = debtor.fullName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            DetailRow("Borcun Yaranma Tarixi:", debtor.debtStartDate)
+                            DetailRow("Faktura / Qaimə:", debtor.invoiceNumber)
+                            DetailRow("Cari Qalıq Borc:", "₼ ${String.format(Locale.US, "%,.2f", debtor.totalDebt)}")
+                            DetailRow("Son Ödəmə Müddəti:", debtor.dueDate)
+                            DetailRow("Status:", debtor.status.label)
+                            debtor.lastPaymentDate?.let {
+                                DetailRow("Son Ödəniş Tarixi:", it)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val shareText = "Hörmətli ${debtor.fullName}, e-Manager ERP məlumatı: Sizin ${debtor.debtStartDate} tarixində yaranmış ₼ ${String.format(Locale.US, "%,.2f", debtor.totalDebt)} məbləğində borcunuz mövcuddur. Zəhmət olmasa ödənişi təmin edəsiniz."
+                        val cleanPhone = debtor.phone.replace("+", "").replace(" ", "").replace("-", "")
+                        val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(shareText)}")
+                        val intent = Intent(Intent.ACTION_VIEW, uri)
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            val generalIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                            }
+                            context.startActivity(Intent.createChooser(generalIntent, "WhatsApp ilə Paylaş"))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("WhatsApp ilə Xatırlat")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedDebtorForDebtOrigin = null }) {
+                    Text("Bağla")
+                }
+            }
+        )
+    }
+
     // DETAILS DIALOG
     selectedDebtorForDetails?.let { debtor ->
         AlertDialog(
@@ -302,6 +380,8 @@ fun DebtorsScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     debtor.companyName?.let { DetailRow("Şirkət/Müəssisə:", it) }
                     DetailRow("Telefon:", debtor.phone)
+                    DetailRow("Borcun Yaranma Tarixi:", debtor.debtStartDate)
+                    DetailRow("Faktura №:", debtor.invoiceNumber)
                     DetailRow("Qalıq Borc:", "₼ ${String.format(Locale.US, "%,.2f", debtor.totalDebt)}")
                     DetailRow("Kredit Limiti:", "₼ ${String.format(Locale.US, "%,.2f", debtor.creditLimit)}")
                     DetailRow("Son Tarix:", debtor.dueDate)
@@ -324,6 +404,7 @@ fun DebtorsScreen(
 fun DebtorCard(
     debtor: Debtor,
     onCardClick: () -> Unit,
+    onDebtClick: () -> Unit,
     onPayClick: () -> Unit,
     onCallClick: () -> Unit
 ) {
@@ -356,18 +437,40 @@ fun DebtorCard(
                     }
                 }
 
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "₼ ${String.format(Locale.US, "%,.2f", debtor.totalDebt)}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = if (debtor.status == DebtStatus.OVERDUE) LossRed else EmeraldPrimary
-                    )
-                    Text(
-                        text = debtor.status.label,
-                        fontSize = 11.sp,
-                        color = if (debtor.status == DebtStatus.OVERDUE) LossRed else InfoBlue
-                    )
+                Surface(
+                    onClick = onDebtClick,
+                    shape = RoundedCornerShape(8.dp),
+                    color = (if (debtor.status == DebtStatus.OVERDUE) LossRed else EmeraldPrimary).copy(alpha = 0.12f),
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "₼ ${String.format(Locale.US, "%,.2f", debtor.totalDebt)}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = if (debtor.status == DebtStatus.OVERDUE) LossRed else EmeraldPrimary
+                            )
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Tarixə bax",
+                                modifier = Modifier.size(13.dp),
+                                tint = if (debtor.status == DebtStatus.OVERDUE) LossRed else EmeraldPrimary
+                            )
+                        }
+                        Text(
+                            text = "Yaranma: ${debtor.debtStartDate}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 

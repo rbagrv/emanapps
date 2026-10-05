@@ -41,6 +41,7 @@ fun SuppliersScreen(
 
     var selectedSupplierForPayment by remember { mutableStateOf<Supplier?>(null) }
     var selectedSupplierForDetails by remember { mutableStateOf<Supplier?>(null) }
+    var selectedSupplierForDebtOrigin by remember { mutableStateOf<Supplier?>(null) }
 
     Scaffold(
         topBar = {
@@ -180,6 +181,7 @@ fun SuppliersScreen(
                         SupplierCard(
                             supplier = supplier,
                             onCardClick = { selectedSupplierForDetails = supplier },
+                            onDebtClick = { selectedSupplierForDebtOrigin = supplier },
                             onPayClick = { selectedSupplierForPayment = supplier },
                             onCallClick = {
                                 val intent = Intent(Intent.ACTION_DIAL).apply {
@@ -258,6 +260,76 @@ fun SuppliersScreen(
         )
     }
 
+    // SUPPLIER DEBT ORIGIN DIALOG
+    selectedSupplierForDebtOrigin?.let { supplier ->
+        AlertDialog(
+            onDismissRequest = { selectedSupplierForDebtOrigin = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Event,
+                    contentDescription = null,
+                    tint = WarningOrange,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Borcun Yaranma Tarixi & Faktura",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = supplier.companyName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            DetailRow("Borcun Yaranma Tarixi:", supplier.debtStartDate)
+                            DetailRow("Cari Qalıq Borcumuz:", "₼ ${String.format(Locale.US, "%,.2f", supplier.totalPayable)}")
+                            DetailRow("Təchizat Kateqoriyası:", supplier.category)
+                            DetailRow("Əlaqədar Şəxs:", supplier.contactPerson)
+                            DetailRow("Telefon:", supplier.phone)
+                            DetailRow("Son Təhvil Tarixi:", supplier.lastDeliveryDate)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val shareText = "Salam, ${supplier.companyName} təmsilçisi. ${supplier.debtStartDate} tarixində yaranmış ₼ ${String.format(Locale.US, "%,.2f", supplier.totalPayable)} məbləğində hesablaşma barədə əlaqə saxlayırıq."
+                        val cleanPhone = supplier.phone.replace("+", "").replace(" ", "").replace("-", "")
+                        val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(shareText)}")
+                        val intent = Intent(Intent.ACTION_VIEW, uri)
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            val generalIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                            }
+                            context.startActivity(Intent.createChooser(generalIntent, "WhatsApp ilə Paylaş"))
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("WhatsApp ilə Yaz")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedSupplierForDebtOrigin = null }) {
+                    Text("Bağla")
+                }
+            }
+        )
+    }
+
     // DETAILS DIALOG
     selectedSupplierForDetails?.let { supplier ->
         AlertDialog(
@@ -274,6 +346,7 @@ fun SuppliersScreen(
                     DetailRow("Telefon:", supplier.phone)
                     supplier.email?.let { DetailRow("E-poçt:", it) }
                     DetailRow("Kateqoriya:", supplier.category)
+                    DetailRow("Borcun Yaranma Tarixi:", supplier.debtStartDate)
                     DetailRow("Qalıq Borc:", "₼ ${String.format(Locale.US, "%,.2f", supplier.totalPayable)}")
                     DetailRow("Status:", supplier.lastDeliveryDate)
                 }
@@ -291,6 +364,7 @@ fun SuppliersScreen(
 fun SupplierCard(
     supplier: Supplier,
     onCardClick: () -> Unit,
+    onDebtClick: () -> Unit,
     onPayClick: () -> Unit,
     onCallClick: () -> Unit
 ) {
@@ -321,18 +395,40 @@ fun SupplierCard(
                     )
                 }
 
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "₼ ${String.format(Locale.US, "%,.2f", supplier.totalPayable)}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = WarningOrange
-                    )
-                    Text(
-                        text = "Qalıq Borc",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Surface(
+                    onClick = onDebtClick,
+                    shape = RoundedCornerShape(8.dp),
+                    color = WarningOrange.copy(alpha = 0.12f),
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "₼ ${String.format(Locale.US, "%,.2f", supplier.totalPayable)}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = WarningOrange
+                            )
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Tarixə bax",
+                                modifier = Modifier.size(13.dp),
+                                tint = WarningOrange
+                            )
+                        }
+                        Text(
+                            text = "Yaranma: ${supplier.debtStartDate}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 

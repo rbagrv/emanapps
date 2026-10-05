@@ -28,6 +28,7 @@ import com.example.business.ui.theme.LossRed
 @Composable
 fun SettingsScreen(
     viewModel: BusinessViewModel,
+    onNavigateBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val companyName by viewModel.companyName.collectAsState()
@@ -49,6 +50,13 @@ fun SettingsScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
+                },
+                navigationIcon = {
+                    if (onNavigateBack != null) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Geri")
+                        }
+                    }
                 }
             )
         },

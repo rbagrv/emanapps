@@ -97,15 +97,26 @@ class BusinessViewModel(
 
     // Warehouse
     val warehouseSearchQuery = MutableStateFlow("")
+    val hideNegativeStock = MutableStateFlow(false)
+    val hideZeroStock = MutableStateFlow(false)
+    val onlyLowStock = MutableStateFlow(false)
+
     val warehouseItems: StateFlow<List<WarehouseItem>> = combine(
         repository.warehouseItems,
-        warehouseSearchQuery
-    ) { list, query ->
+        warehouseSearchQuery,
+        hideNegativeStock,
+        hideZeroStock,
+        onlyLowStock
+    ) { list, query, hideNeg, hideZero, lowOnly ->
         list.filter { item ->
-            query.isBlank() ||
+            val matchesQuery = query.isBlank() ||
                     item.name.contains(query, ignoreCase = true) ||
                     item.sku.contains(query, ignoreCase = true) ||
                     (item.barcode?.contains(query) == true)
+            val matchesNeg = !hideNeg || item.stock >= 0.0
+            val matchesZero = !hideZero || item.stock != 0.0
+            val matchesLow = !lowOnly || item.isLowStock
+            matchesQuery && matchesNeg && matchesZero && matchesLow
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -113,8 +124,22 @@ class BusinessViewModel(
 
     // Reports
     val selectedReportPeriod = MutableStateFlow(ReportPeriod.THIS_MONTH)
+    val selectedReportType = MutableStateFlow(ReportType.TURNOVER)
+
     private val _currentReport = MutableStateFlow(repository.getReport(ReportPeriod.THIS_MONTH))
     val currentReport: StateFlow<PeriodReport> = _currentReport.asStateFlow()
+
+    private val _pnlReport = MutableStateFlow(repository.getProfitAndLoss(ReportPeriod.THIS_MONTH))
+    val pnlReport: StateFlow<ProfitAndLossReport> = _pnlReport.asStateFlow()
+
+    private val _balanceReport = MutableStateFlow(repository.getBalanceSheet())
+    val balanceReport: StateFlow<BalanceSheetReport> = _balanceReport.asStateFlow()
+
+    private val _cashFlowReport = MutableStateFlow(repository.getCashFlow(ReportPeriod.THIS_MONTH))
+    val cashFlowReport: StateFlow<CashFlowReport> = _cashFlowReport.asStateFlow()
+
+    private val _taxReport = MutableStateFlow(repository.getTaxReport(ReportPeriod.THIS_MONTH))
+    val taxReport: StateFlow<TaxLiabilityReport> = _taxReport.asStateFlow()
 
     // Chat
     val channels: StateFlow<List<ChatChannel>> = repository.channels
@@ -396,6 +421,30 @@ class BusinessViewModel(
     fun selectPeriod(period: ReportPeriod) {
         selectedReportPeriod.value = period
         _currentReport.value = repository.getReport(period)
+        _pnlReport.value = repository.getProfitAndLoss(period)
+        _balanceReport.value = repository.getBalanceSheet()
+        _cashFlowReport.value = repository.getCashFlow(period)
+        _taxReport.value = repository.getTaxReport(period)
+    }
+
+    fun selectReportType(type: ReportType) {
+        selectedReportType.value = type
+    }
+
+    fun shareReportPdf(context: Context, sendToWhatsApp: Boolean = false) {
+        com.example.business.util.PdfReportHelper.generateAndSharePdf(
+            context = context,
+            companyName = companyName.value,
+            voen = summary.value.voen,
+            reportType = selectedReportType.value,
+            period = selectedReportPeriod.value,
+            periodReport = currentReport.value,
+            pnlReport = pnlReport.value,
+            balanceReport = balanceReport.value,
+            cashFlowReport = cashFlowReport.value,
+            taxReport = taxReport.value,
+            sendToWhatsApp = sendToWhatsApp
+        )
     }
 
     // Debtor actions
@@ -403,8 +452,8 @@ class BusinessViewModel(
         repository.addDebtorPayment(debtorId, amount, paymentType, cashier = "Sahibkar (Rəhbər)")
     }
 
-    fun createDebtor(name: String, company: String?, phone: String, debt: Double, dueDate: String, notes: String) {
-        repository.addNewDebtor(name, company, phone, debt, dueDate, notes)
+    fun createDebtor(name: String, company: String?, phone: String, debt: Double, dueDate: String, notes: String, debtStartDate: String? = null) {
+        repository.addNewDebtor(name, company, phone, debt, dueDate, notes, debtStartDate)
     }
 
     // Supplier actions
@@ -412,8 +461,8 @@ class BusinessViewModel(
         repository.addSupplierPayment(supplierId, amount, note)
     }
 
-    fun createSupplier(companyName: String, contactPerson: String, phone: String, email: String, debt: Double, category: String) {
-        repository.addNewSupplier(companyName, contactPerson, phone, email, debt, category)
+    fun createSupplier(companyName: String, contactPerson: String, phone: String, email: String, debt: Double, category: String, debtStartDate: String? = null) {
+        repository.addNewSupplier(companyName, contactPerson, phone, email, debt, category, debtStartDate)
     }
 
     // Warehouse actions
@@ -437,6 +486,19 @@ class BusinessViewModel(
             repository.sendMessage(channelId, text, senderRole = "Sahibkar")
             chatInputText.value = ""
         }
+    }
+
+    val teamEmployees: List<TeamEmployee>
+        get() = repository.teamEmployees
+
+    fun assignTask(title: String, employee: TeamEmployee, dueDate: String, priority: TaskPriority) {
+        val channelId = selectedChannel.value?.id ?: "c_general"
+        repository.assignTask(channelId, title, employee, dueDate, priority)
+    }
+
+    fun toggleTaskStatus(taskId: String) {
+        val channelId = selectedChannel.value?.id ?: "c_general"
+        repository.toggleTaskStatus(channelId, taskId)
     }
 
     fun setThemeMode(mode: ThemeMode) {

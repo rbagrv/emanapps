@@ -185,6 +185,11 @@ class BusinessRepository {
                         else if (balance > 0.0) DebtStatus.ACTIVE
                         else DebtStatus.PAID
 
+                        val debtStartDate = doc.getString("debtStartDate")
+                            ?: doc.getString("issueDate")
+                            ?: doc.getTimestamp("createdAt")?.toDate()?.let { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(it) }
+                            ?: "15.09.2026"
+
                         Debtor(
                             id = id,
                             fullName = name,
@@ -193,6 +198,7 @@ class BusinessRepository {
                             totalDebt = balance,
                             creditLimit = 5000.0,
                             dueDate = "Dövri Hesablaşma",
+                            debtStartDate = debtStartDate,
                             status = status,
                             notes = notes
                         )
@@ -230,6 +236,10 @@ class BusinessRepository {
                         val balance = doc.getDouble("balance") ?: 0.0
                         val voen = doc.getString("voen")
                         val category = if (!voen.isNullOrBlank()) "VÖEN: $voen" else "Təchizat"
+                        val debtStartDate = doc.getString("debtStartDate")
+                            ?: doc.getString("issueDate")
+                            ?: doc.getTimestamp("createdAt")?.toDate()?.let { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(it) }
+                            ?: "10.09.2026"
 
                         Supplier(
                             id = id,
@@ -238,6 +248,7 @@ class BusinessRepository {
                             phone = phone,
                             email = email,
                             totalPayable = balance,
+                            debtStartDate = debtStartDate,
                             category = category,
                             lastDeliveryDate = "Aktiv"
                         )
@@ -649,6 +660,143 @@ class BusinessRepository {
         )
     }
 
+    fun getProfitAndLoss(period: ReportPeriod): ProfitAndLossReport {
+        val baseReport = getReport(period)
+        val revenue = baseReport.totalSales
+        val cogs = baseReport.totalPurchases
+        val grossProfit = (revenue - cogs).coerceAtLeast(0.0)
+        val grossMargin = if (revenue > 0) (grossProfit / revenue) * 100 else 0.0
+
+        val salaries = revenue * 0.12
+        val rent = when (period) {
+            ReportPeriod.TODAY -> 50.0
+            ReportPeriod.THIS_WEEK -> 350.0
+            ReportPeriod.THIS_MONTH -> 1500.0
+            ReportPeriod.THIS_YEAR -> 18000.0
+        }
+        val utilities = revenue * 0.03
+        val logistics = revenue * 0.04
+        val otherExpenses = revenue * 0.02
+        val totalExpenses = salaries + rent + utilities + logistics + otherExpenses
+        val operatingProfit = grossProfit - totalExpenses
+        val taxExpense = (revenue * 0.02)
+        val netProfit = operatingProfit - taxExpense
+        val netMargin = if (revenue > 0) (netProfit / revenue) * 100 else 0.0
+
+        return ProfitAndLossReport(
+            revenue = revenue,
+            otherIncome = 0.0,
+            cogs = cogs,
+            grossProfit = grossProfit,
+            grossMarginPercent = grossMargin,
+            salaries = salaries,
+            rent = rent,
+            utilities = utilities,
+            logistics = logistics,
+            otherExpenses = otherExpenses,
+            totalOperatingExpenses = totalExpenses,
+            operatingProfit = operatingProfit,
+            taxExpense = taxExpense,
+            netProfit = netProfit,
+            netMarginPercent = netMargin
+        )
+    }
+
+    fun getBalanceSheet(): BalanceSheetReport {
+        val s = _summary.value
+        val cashAndBank = s.cashInHand + s.bankBalance
+        val receivables = s.totalReceivables
+        val inventory = s.warehouseStockValue
+        val totalCurrentAssets = cashAndBank + receivables + inventory
+        val fixedAssets = 25000.0
+        val totalAssets = totalCurrentAssets + fixedAssets
+
+        val payables = s.totalPayables
+        val taxDebt = (s.monthSales * 0.02 * 0.45).coerceAtLeast(240.0)
+        val shortTermLoans = 2000.0
+        val totalCurrentLiabilities = payables + taxDebt + shortTermLoans
+
+        val charterCapital = 10000.0
+        val retainedEarnings = totalAssets - totalCurrentLiabilities - charterCapital
+        val totalEquity = charterCapital + retainedEarnings
+
+        return BalanceSheetReport(
+            cashAndBank = cashAndBank,
+            receivables = receivables,
+            inventory = inventory,
+            totalCurrentAssets = totalCurrentAssets,
+            fixedAssets = fixedAssets,
+            totalAssets = totalAssets,
+            payables = payables,
+            taxDebt = taxDebt,
+            shortTermLoans = shortTermLoans,
+            totalCurrentLiabilities = totalCurrentLiabilities,
+            charterCapital = charterCapital,
+            retainedEarnings = retainedEarnings,
+            totalEquity = totalEquity,
+            totalLiabilitiesAndEquity = totalCurrentLiabilities + totalEquity
+        )
+    }
+
+    fun getCashFlow(period: ReportPeriod): CashFlowReport {
+        val baseReport = getReport(period)
+        val sales = baseReport.totalSales
+        val purchases = baseReport.totalPurchases
+        val salaries = sales * 0.12
+        val expenses = sales * 0.08
+        val taxes = sales * 0.02
+        val netOperating = sales - (purchases + salaries + expenses + taxes)
+        val investments = 0.0
+        val netCash = netOperating - investments
+        val s = _summary.value
+        val closingCash = s.cashInHand + s.bankBalance
+        val openingCash = (closingCash - netCash).coerceAtLeast(0.0)
+
+        return CashFlowReport(
+            inflowSales = sales,
+            outflowSuppliers = purchases,
+            outflowSalaries = salaries,
+            outflowExpenses = expenses,
+            outflowTaxes = taxes,
+            netOperatingCashFlow = netOperating,
+            outflowInvestments = investments,
+            netCashFlow = netCash,
+            openingCash = openingCash,
+            closingCash = closingCash
+        )
+    }
+
+    fun getTaxReport(period: ReportPeriod): TaxLiabilityReport {
+        val s = _summary.value
+        val sales = when (period) {
+            ReportPeriod.TODAY -> s.todaySales
+            ReportPeriod.THIS_WEEK -> s.monthSales * 0.30
+            ReportPeriod.THIS_MONTH -> s.monthSales
+            ReportPeriod.THIS_YEAR -> s.monthSales * 1.5
+        }
+        val simplified = sales * 0.02
+        val vat = sales * 0.18
+        val income = (sales * 0.20) * 0.20
+        val dsmf = (sales * 0.12) * 0.22
+        val its = (sales * 0.12) * 0.02
+        val totalCalculated = simplified + dsmf + its
+        val totalPaid = totalCalculated * 0.65
+        val taxDebt = totalCalculated - totalPaid
+
+        return TaxLiabilityReport(
+            vatDue = vat,
+            simplifiedTax = simplified,
+            incomeTax = income,
+            dsmf = dsmf,
+            its = its,
+            totalCalculated = totalCalculated,
+            totalPaid = totalPaid,
+            taxDebt = taxDebt,
+            deadline = "20 Oktyabr 2026",
+            status = if (taxDebt > 1000) "Ödəniş müddəti yaxınlaşır" else "Cari qaydada"
+        )
+    }
+
     private data class Tuple4<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     // -------------------------------------------------------------
@@ -695,8 +843,9 @@ class BusinessRepository {
         }
     }
 
-    fun addNewDebtor(name: String, company: String?, phone: String, debt: Double, dueDate: String, notes: String) {
+    fun addNewDebtor(name: String, company: String?, phone: String, debt: Double, dueDate: String, notes: String, debtStartDate: String? = null) {
         val newId = UUID.randomUUID().toString()
+        val creationDate = debtStartDate ?: SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
         val newDebtor = Debtor(
             id = newId,
             fullName = name,
@@ -704,6 +853,7 @@ class BusinessRepository {
             phone = phone,
             totalDebt = debt,
             dueDate = dueDate,
+            debtStartDate = creationDate,
             status = DebtStatus.ACTIVE,
             notes = notes
         )
@@ -717,6 +867,7 @@ class BusinessRepository {
                 "customerType" to "Fiziki",
                 "currency" to "AZN",
                 "balance" to debt,
+                "debtStartDate" to creationDate,
                 "notes" to notes,
                 "createdAt" to FieldValue.serverTimestamp()
             )
@@ -754,8 +905,9 @@ class BusinessRepository {
         }
     }
 
-    fun addNewSupplier(companyName: String, contactPerson: String, phone: String, email: String, debt: Double, category: String) {
+    fun addNewSupplier(companyName: String, contactPerson: String, phone: String, email: String, debt: Double, category: String, debtStartDate: String? = null) {
         val newId = UUID.randomUUID().toString()
+        val creationDate = debtStartDate ?: SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
         val newSup = Supplier(
             id = newId,
             companyName = companyName,
@@ -763,6 +915,7 @@ class BusinessRepository {
             phone = phone,
             email = email,
             totalPayable = debt,
+            debtStartDate = creationDate,
             category = category,
             lastDeliveryDate = "Yeni"
         )
@@ -775,6 +928,7 @@ class BusinessRepository {
                 "phone" to phone,
                 "email" to email,
                 "balance" to debt,
+                "debtStartDate" to creationDate,
                 "category" to category,
                 "createdAt" to FieldValue.serverTimestamp()
             )
@@ -881,6 +1035,112 @@ class BusinessRepository {
         currentMap[channelId] = list
         _messages.value = currentMap
         updateChannelLastMessage(channelId, text.trim())
+    }
+
+    val teamEmployees = listOf(
+        TeamEmployee("emp_1", "Elmir Qasımov", "Baş Kassir", "+994 50 123 45 67"),
+        TeamEmployee("emp_2", "Rəşad Əliyev", "Anbardar", "+994 55 234 56 78"),
+        TeamEmployee("emp_3", "Leyla Məmmədova", "Baş Mühasib", "+994 70 345 67 89"),
+        TeamEmployee("emp_4", "Kamran Vəliyev", "Satış Meneceri", "+994 51 456 78 90"),
+        TeamEmployee("emp_5", "Aysel İsmayılova", "Kassir-Operator", "+994 77 567 89 01")
+    )
+
+    fun assignTask(
+        channelId: String,
+        taskTitle: String,
+        assignedToEmployee: TeamEmployee,
+        dueDate: String,
+        priority: TaskPriority
+    ) {
+        val taskId = UUID.randomUUID().toString()
+        val task = ChatTask(
+            id = taskId,
+            title = taskTitle,
+            assignedTo = "@${assignedToEmployee.name} (${assignedToEmployee.role})",
+            dueDate = dueDate,
+            priority = priority,
+            status = TaskStatus.PENDING
+        )
+        val text = "📋 TAPŞIRIQ: $taskTitle\nİcraçı: @${assignedToEmployee.name} (${assignedToEmployee.role})\nSon Tarix: $dueDate"
+
+        val currentUserId = auth.currentUser?.uid ?: "owner_current"
+        val now = System.currentTimeMillis()
+
+        val newMsg = ChatMessage(
+            id = taskId,
+            channelId = channelId,
+            senderId = currentUserId,
+            senderName = "Mən (Sahibkar)",
+            senderRole = "Sahibkar",
+            text = text,
+            timestamp = now,
+            isMine = true,
+            messageType = MessageType.TASK,
+            task = task,
+            taggedEmployee = assignedToEmployee.name
+        )
+
+        val currentMap = _messages.value.toMutableMap()
+        val list = currentMap[channelId]?.toMutableList() ?: mutableListOf()
+        list.add(newMsg)
+        currentMap[channelId] = list
+        _messages.value = currentMap
+        updateChannelLastMessage(channelId, "📋 Yeni tapşırıq: $taskTitle")
+
+        // Trigger local notification so offline/background catches it
+        com.example.business.BusinessApp.instance?.let { ctx ->
+            com.example.business.util.NotificationHelper.showNotification(
+                context = ctx,
+                title = "📋 Yeni Tapşırıq Təyin Edildi",
+                message = "${assignedToEmployee.name} üçün tapşırıq: $taskTitle ($dueDate)"
+            )
+        }
+
+        try {
+            val taskData = hashMapOf(
+                "text" to text,
+                "type" to "task",
+                "taskTitle" to taskTitle,
+                "assignedTo" to assignedToEmployee.name,
+                "assignedRole" to assignedToEmployee.role,
+                "dueDate" to dueDate,
+                "priority" to priority.name,
+                "status" to "PENDING",
+                "userId" to currentUserId,
+                "userName" to "Sahibkar",
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            firestore.collection("tenants").document(activeTenantId)
+                .collection("chat").document(taskId).set(taskData)
+        } catch (e: Exception) {
+            Log.w("BusinessRepo", "Error saving task to Firestore: ${e.message}")
+        }
+    }
+
+    fun toggleTaskStatus(channelId: String, taskId: String) {
+        val currentMap = _messages.value.toMutableMap()
+        val list = currentMap[channelId]?.toMutableList() ?: return
+        val idx = list.indexOfFirst { it.task?.id == taskId }
+        if (idx != -1) {
+            val oldMsg = list[idx]
+            val oldTask = oldMsg.task ?: return
+            val newStatus = when (oldTask.status) {
+                TaskStatus.PENDING -> TaskStatus.IN_PROGRESS
+                TaskStatus.IN_PROGRESS -> TaskStatus.COMPLETED
+                TaskStatus.COMPLETED -> TaskStatus.PENDING
+            }
+            val updatedTask = oldTask.copy(status = newStatus)
+            list[idx] = oldMsg.copy(task = updatedTask)
+            currentMap[channelId] = list
+            _messages.value = currentMap
+
+            try {
+                firestore.collection("tenants").document(activeTenantId)
+                    .collection("chat").document(taskId).update("status", newStatus.name)
+            } catch (e: Exception) {
+                Log.w("BusinessRepo", "Error updating task status: ${e.message}")
+            }
+        }
     }
 
     private fun sendSystemAlert(channelId: String, text: String) {

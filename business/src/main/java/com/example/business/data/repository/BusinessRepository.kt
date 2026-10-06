@@ -3,10 +3,12 @@ package com.example.business.data.repository
 import android.util.Log
 import com.example.business.data.model.*
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.Timestamp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -172,36 +174,41 @@ class BusinessRepository {
                 }
                 if (snapshot != null) {
                     val debtorsList = snapshot.documents.mapNotNull { doc ->
-                        val id = doc.id
-                        val name = doc.getString("name") ?: return@mapNotNull null
-                        val phone = doc.getString("phone") ?: ""
-                        val company = doc.getString("representativeName") ?: doc.getString("contactPerson")
-                        val balance = (doc.getDouble("balance") ?: 0.0)
-                        val notes = doc.getString("notes") ?: ""
-                        val voen = doc.getString("voen")
+                        try {
+                            val id = doc.id
+                            val name = doc.getString("name") ?: return@mapNotNull null
+                            val phone = doc.getString("phone") ?: ""
+                            val company = doc.getString("representativeName") ?: doc.getString("contactPerson")
+                            val balance = doc.safeDouble("balance", 0.0)
+                            val notes = doc.getString("notes") ?: ""
+                            val voen = doc.getString("voen")
 
-                        // In e-manager ERP, positive balance means they owe us (Debitor)
-                        val status = if (balance > 3000.0) DebtStatus.OVERDUE
-                        else if (balance > 0.0) DebtStatus.ACTIVE
-                        else DebtStatus.PAID
+                            // In e-manager ERP, positive balance means they owe us (Debitor)
+                            val status = if (balance > 3000.0) DebtStatus.OVERDUE
+                            else if (balance > 0.0) DebtStatus.ACTIVE
+                            else DebtStatus.PAID
 
-                        val debtStartDate = doc.getString("debtStartDate")
-                            ?: doc.getString("issueDate")
-                            ?: doc.getTimestamp("createdAt")?.toDate()?.let { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(it) }
-                            ?: "15.09.2026"
+                            val debtStartDate = doc.getString("debtStartDate")
+                                ?: doc.getString("issueDate")
+                                ?: doc.safeDateString("createdAt")
+                                ?: "15.09.2026"
 
-                        Debtor(
-                            id = id,
-                            fullName = name,
-                            companyName = if (!voen.isNullOrBlank()) "VÖEN: $voen" else company,
-                            phone = phone,
-                            totalDebt = balance,
-                            creditLimit = 5000.0,
-                            dueDate = "Dövri Hesablaşma",
-                            debtStartDate = debtStartDate,
-                            status = status,
-                            notes = notes
-                        )
+                            Debtor(
+                                id = id,
+                                fullName = name,
+                                companyName = if (!voen.isNullOrBlank()) "VÖEN: $voen" else company,
+                                phone = phone,
+                                totalDebt = balance,
+                                creditLimit = 5000.0,
+                                dueDate = "Dövri Hesablaşma",
+                                debtStartDate = debtStartDate,
+                                status = status,
+                                notes = notes
+                            )
+                        } catch (e: Exception) {
+                            Log.e("BusinessRepo", "Error mapping customer document ${doc.id}", e)
+                            null
+                        }
                     }
 
                     // Directly set real data without artificial fallbacks
@@ -228,30 +235,35 @@ class BusinessRepository {
                 }
                 if (snapshot != null) {
                     val suppliersList = snapshot.documents.mapNotNull { doc ->
-                        val id = doc.id
-                        val name = doc.getString("name") ?: return@mapNotNull null
-                        val contactPerson = doc.getString("contactPerson") ?: doc.getString("representativeName") ?: name
-                        val phone = doc.getString("phone") ?: ""
-                        val email = doc.getString("email")
-                        val balance = doc.getDouble("balance") ?: 0.0
-                        val voen = doc.getString("voen")
-                        val category = if (!voen.isNullOrBlank()) "VÖEN: $voen" else "Təchizat"
-                        val debtStartDate = doc.getString("debtStartDate")
-                            ?: doc.getString("issueDate")
-                            ?: doc.getTimestamp("createdAt")?.toDate()?.let { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(it) }
-                            ?: "10.09.2026"
+                        try {
+                            val id = doc.id
+                            val name = doc.getString("name") ?: return@mapNotNull null
+                            val contactPerson = doc.getString("contactPerson") ?: doc.getString("representativeName") ?: name
+                            val phone = doc.getString("phone") ?: ""
+                            val email = doc.getString("email")
+                            val balance = doc.safeDouble("balance", 0.0)
+                            val voen = doc.getString("voen")
+                            val category = if (!voen.isNullOrBlank()) "VÖEN: $voen" else "Təchizat"
+                            val debtStartDate = doc.getString("debtStartDate")
+                                ?: doc.getString("issueDate")
+                                ?: doc.safeDateString("createdAt")
+                                ?: "10.09.2026"
 
-                        Supplier(
-                            id = id,
-                            companyName = name,
-                            contactPerson = contactPerson,
-                            phone = phone,
-                            email = email,
-                            totalPayable = balance,
-                            debtStartDate = debtStartDate,
-                            category = category,
-                            lastDeliveryDate = "Aktiv"
-                        )
+                            Supplier(
+                                id = id,
+                                companyName = name,
+                                contactPerson = contactPerson,
+                                phone = phone,
+                                email = email,
+                                totalPayable = balance,
+                                debtStartDate = debtStartDate,
+                                category = category,
+                                lastDeliveryDate = "Aktiv"
+                            )
+                        } catch (e: Exception) {
+                            Log.e("BusinessRepo", "Error mapping supplier document ${doc.id}", e)
+                            null
+                        }
                     }
 
                     // Directly set real data without artificial fallbacks
@@ -279,12 +291,16 @@ class BusinessRepository {
                     var totalBank = 0.0
 
                     for (doc in snapshot.documents) {
-                        val type = doc.getString("type") ?: "cash"
-                        val balance = doc.getDouble("balance") ?: 0.0
-                        if (type == "cash") {
-                            totalCash += balance
-                        } else if (type == "bank" || type == "vat_sub_account") {
-                            totalBank += balance
+                        try {
+                            val type = doc.getString("type") ?: "cash"
+                            val balance = doc.safeDouble("balance", 0.0)
+                            if (type == "cash") {
+                                totalCash += balance
+                            } else if (type == "bank" || type == "vat_sub_account") {
+                                totalBank += balance
+                            }
+                        } catch (e: Exception) {
+                            Log.e("BusinessRepo", "Error mapping cash doc ${doc.id}", e)
                         }
                     }
 
@@ -308,30 +324,35 @@ class BusinessRepository {
                 }
                 if (snapshot != null) {
                     val items = snapshot.documents.mapNotNull { doc ->
-                        val id = doc.id
-                        val name = doc.getString("name") ?: return@mapNotNull null
-                        val sku = doc.getString("sku") ?: ""
-                        val barcode = doc.getString("barcode")
-                        val unit = doc.getString("unit") ?: "ədəd"
-                        val stock = (doc.getDouble("stock") ?: doc.getLong("stock")?.toDouble() ?: 0.0)
-                        val salePrice = (doc.getDouble("salePrice") ?: doc.getDouble("price") ?: 0.0)
-                        val costPrice = (doc.getDouble("costPrice")
-                            ?: (doc.get("purchaseDetails") as? Map<*, *>)?.get("price") as? Double
-                            ?: (salePrice * 0.70))
+                        try {
+                            val id = doc.id
+                            val name = doc.getString("name") ?: return@mapNotNull null
+                            val sku = doc.getString("sku") ?: ""
+                            val barcode = doc.getString("barcode")
+                            val unit = doc.getString("unit") ?: "ədəd"
+                            val stock = doc.safeDouble("stock", 0.0)
+                            val salePrice = doc.safeDouble("salePrice", doc.safeDouble("price", 0.0))
+                            val costPrice = (doc.safeDouble("costPrice", 0.0).takeIf { it > 0.0 }
+                                ?: (doc.get("purchaseDetails") as? Map<*, *>)?.get("price")?.let { (it as? Number)?.toDouble() }
+                                ?: (salePrice * 0.70))
 
-                        WarehouseItem(
-                            id = id,
-                            name = name,
-                            sku = sku,
-                            barcode = barcode,
-                            unit = unit,
-                            stock = stock,
-                            costPrice = costPrice,
-                            salePrice = salePrice,
-                            categoryId = doc.getString("categoryId") ?: "",
-                            categoryName = "Ümumi Mallar",
-                            warehouseName = "Əsas Anbar"
-                        )
+                            WarehouseItem(
+                                id = id,
+                                name = name,
+                                sku = sku,
+                                barcode = barcode,
+                                unit = unit,
+                                stock = stock,
+                                costPrice = costPrice,
+                                salePrice = salePrice,
+                                categoryId = doc.getString("categoryId") ?: "",
+                                categoryName = "Ümumi Mallar",
+                                warehouseName = "Əsas Anbar"
+                            )
+                        } catch (e: Exception) {
+                            Log.e("BusinessRepo", "Error mapping product ${doc.id}", e)
+                            null
+                        }
                     }
 
                     _warehouseItems.value = items
@@ -439,27 +460,32 @@ class BusinessRepository {
                 if (snapshot != null) {
                     val currentUserId = auth.currentUser?.uid ?: "owner_current"
                     val list = snapshot.documents.mapNotNull { doc ->
-                        val text = doc.getString("text") ?: return@mapNotNull null
-                        val userId = doc.getString("userId") ?: ""
-                        val userName = doc.getString("userName") ?: "İstifadəçi"
-                        val type = doc.getString("type") ?: "text"
-                        val timestamp = (doc.getTimestamp("createdAt")?.toDate()?.time)
-                            ?: (doc.getLong("timestamp"))
-                            ?: System.currentTimeMillis()
+                        try {
+                            val text = doc.getString("text") ?: return@mapNotNull null
+                            val userId = doc.getString("userId") ?: ""
+                            val userName = doc.getString("userName") ?: "İstifadəçi"
+                            val type = doc.getString("type") ?: "text"
+                            val timestamp = doc.safeTimestampMillis("createdAt")
+                                ?: doc.safeTimestampMillis("timestamp")
+                                ?: System.currentTimeMillis()
 
-                        val isMine = userId == currentUserId
+                            val isMine = userId == currentUserId
 
-                        ChatMessage(
-                            id = doc.id,
-                            channelId = "c_general",
-                            senderId = userId,
-                            senderName = userName,
-                            senderRole = if (isMine) "Sahibkar" else "Komanda",
-                            text = text,
-                            timestamp = timestamp,
-                            isMine = isMine,
-                            messageType = if (type == "alert") MessageType.ALERT else MessageType.TEXT
-                        )
+                            ChatMessage(
+                                id = doc.id,
+                                channelId = "c_general",
+                                senderId = userId,
+                                senderName = userName,
+                                senderRole = if (isMine) "Sahibkar" else "Komanda",
+                                text = text,
+                                timestamp = timestamp,
+                                isMine = isMine,
+                                messageType = if (type == "alert") MessageType.ALERT else MessageType.TEXT
+                            )
+                        } catch (e: Exception) {
+                            Log.e("BusinessRepo", "Error mapping chat message ${doc.id}", e)
+                            null
+                        }
                     }
 
                     val previousCount = (_messages.value["c_general"] ?: emptyList()).size
@@ -1182,3 +1208,79 @@ class BusinessRepository {
         )
     }
 }
+
+fun DocumentSnapshot.safeDouble(field: String, default: Double = 0.0): Double {
+    return try {
+        when (val v = get(field)) {
+            is Number -> v.toDouble()
+            is String -> v.toDoubleOrNull() ?: default
+            else -> default
+        }
+    } catch (e: Exception) {
+        default
+    }
+}
+
+fun DocumentSnapshot.safeDateString(field: String, pattern: String = "dd.MM.yyyy"): String? {
+    return try {
+        when (val v = get(field)) {
+            is Timestamp -> {
+                SimpleDateFormat(pattern, Locale.getDefault()).format(v.toDate())
+            }
+            is Date -> {
+                SimpleDateFormat(pattern, Locale.getDefault()).format(v)
+            }
+            is Number -> {
+                val num = v.toLong()
+                val millis = if (num < 10000000000L) num * 1000 else num
+                SimpleDateFormat(pattern, Locale.getDefault()).format(Date(millis))
+            }
+            is String -> {
+                if (v.isBlank()) null
+                else if (v.contains("T")) {
+                    try {
+                        val parsed = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(v)
+                        parsed?.let { SimpleDateFormat(pattern, Locale.getDefault()).format(it) } ?: v
+                    } catch (e: Exception) {
+                        v
+                    }
+                } else v
+            }
+            is Map<*, *> -> {
+                val sec = (v["_seconds"] as? Number)?.toLong() ?: (v["seconds"] as? Number)?.toLong()
+                if (sec != null) SimpleDateFormat(pattern, Locale.getDefault()).format(Date(sec * 1000)) else null
+            }
+            else -> null
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+fun DocumentSnapshot.safeTimestampMillis(field: String): Long? {
+    return try {
+        when (val v = get(field)) {
+            is Timestamp -> v.toDate().time
+            is Date -> v.time
+            is Number -> {
+                val num = v.toLong()
+                if (num < 10000000000L) num * 1000 else num
+            }
+            is String -> {
+                v.toLongOrNull() ?: try {
+                    SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(v)?.time
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            is Map<*, *> -> {
+                val sec = (v["_seconds"] as? Number)?.toLong() ?: (v["seconds"] as? Number)?.toLong()
+                if (sec != null) sec * 1000 else null
+            }
+            else -> null
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+

@@ -319,7 +319,7 @@ fun SettingsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "e-Manager Sahibkar Edition • v1.0",
+                        text = "e-Manager Sahibkar Edition • v${com.example.business.BuildConfig.VERSION_NAME}",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

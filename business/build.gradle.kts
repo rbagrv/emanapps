@@ -1,8 +1,55 @@
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
 }
+
+val versionPropsFile = file("version.properties")
+
+fun getOrBumpVersion(): Pair<Int, String> {
+    val props = Properties()
+    if (!versionPropsFile.exists()) {
+        props.setProperty("versionCode", "4")
+        props.setProperty("versionName", "1.3")
+        versionPropsFile.createNewFile()
+        FileOutputStream(versionPropsFile).use { props.store(it, "Version properties") }
+    } else {
+        FileInputStream(versionPropsFile).use { props.load(it) }
+    }
+
+    var code = props.getProperty("versionCode", "4").toIntOrNull() ?: 4
+    var name = props.getProperty("versionName", "1.3")
+
+    val taskNames = gradle.startParameter.taskNames
+    val isBuilding = taskNames.any { task ->
+        val t = task.lowercase()
+        t.contains("assemble") || t.contains("bundle") || t.contains("package") || t.contains("install") || t.contains("build")
+    }
+
+    if (isBuilding) {
+        code += 1
+        val parts = name.split(".")
+        name = if (parts.size >= 2) {
+            val major = parts[0]
+            val minor = (parts[1].toIntOrNull() ?: 0) + 1
+            "$major.$minor"
+        } else {
+            "1.$code"
+        }
+        props.setProperty("versionCode", code.toString())
+        props.setProperty("versionName", name)
+        FileOutputStream(versionPropsFile).use { props.store(it, "Auto-incremented during build") }
+        println(">>> [Auto-Version] Bumped Sahibkar version -> Code: $code, Name: v$name")
+    }
+
+    return Pair(code, name)
+}
+
+val (appVersionCode, appVersionName) = getOrBumpVersion()
 
 android {
     namespace = "com.example.business"
@@ -12,8 +59,8 @@ android {
         applicationId = "com.emanager.business"
         minSdk = 24
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -31,6 +78,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -78,3 +126,17 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    doLast {
+        val apkSource = file("build/outputs/apk/debug/business-debug.apk")
+        if (apkSource.exists()) {
+            val targetDir = rootProject.file("APK_FAYLLARI")
+            targetDir.mkdirs()
+            val targetApk = File(targetDir, "e-Manager_Sahibkar_v${appVersionName}.apk")
+            apkSource.copyTo(targetApk, overwrite = true)
+            println(">>> [Auto-Copy] Successfully copied APK to: ${targetApk.name}")
+        }
+    }
+}
+

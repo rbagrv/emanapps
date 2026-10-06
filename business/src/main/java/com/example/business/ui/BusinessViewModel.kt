@@ -235,6 +235,29 @@ class BusinessViewModel(
     }
 
     fun loadUserTenants(uid: String) {
+        // 1. First fetch active tenants list directly from Cloudflare D1 Backend (api/extension/tenants)
+        viewModelScope.launch {
+            try {
+                val d1Response = com.example.business.data.api.D1ApiClient.erpRestService.getTenants()
+                if (d1Response.isSuccessful && d1Response.body()?.success == true) {
+                    val d1List = d1Response.body()?.tenants?.map { dto ->
+                        Tenant(
+                            id = dto.id,
+                            name = dto.name,
+                            voen = dto.voen
+                        )
+                    } ?: emptyList()
+
+                    if (d1List.isNotEmpty()) {
+                        _availableTenants.value = d1List
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BusinessVM", "D1 tenants load fallback to Firestore: ${e.message}")
+            }
+        }
+
+        // 2. Also fetch user's authorized tenants from Firestore
         firestore.collection("users").document(uid).get()
             .addOnSuccessListener { doc ->
                 if (doc.exists()) {
@@ -258,17 +281,19 @@ class BusinessViewModel(
                                     tenantsList.add(Tenant(id = tId, name = name, voen = voen))
                                     fetchedCount++
                                     if (fetchedCount == authorizedTenants.size) {
-                                        _availableTenants.value = tenantsList
+                                        val combined = (_availableTenants.value + tenantsList).distinctBy { it.id }
+                                        _availableTenants.value = combined
                                     }
                                 }
                                 .addOnFailureListener {
                                     fetchedCount++
                                     if (fetchedCount == authorizedTenants.size) {
-                                        _availableTenants.value = tenantsList
+                                        val combined = (_availableTenants.value + tenantsList).distinctBy { it.id }
+                                        _availableTenants.value = combined
                                     }
                                 }
                         }
-                    } else {
+                    } else if (_availableTenants.value.isEmpty()) {
                         // Discover all active tenants the user is linked to or system default
                         firestore.collection("tenants").limit(10).get()
                             .addOnSuccessListener { snapshot ->

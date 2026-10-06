@@ -89,7 +89,7 @@ fun ChatScreen(
                 actions = {
                     IconButton(onClick = { showAssignTaskDialog = true }) {
                         Icon(
-                            imageVector = Icons.Default.AssignmentAdd,
+                            imageVector = Icons.Default.Assignment,
                             contentDescription = "Tapşırıq Ver",
                             tint = EmeraldPrimary
                         )
@@ -297,7 +297,7 @@ fun ChatScreen(
         AlertDialog(
             onDismissRequest = { showAssignTaskDialog = false },
             icon = {
-                Icon(Icons.Default.AssignmentAdd, contentDescription = null, tint = EmeraldPrimary)
+                Icon(Icons.Default.Assignment, contentDescription = null, tint = EmeraldPrimary)
             },
             title = {
                 Text(text = "İşçiyə Tapşırıq Təyin Et", fontWeight = FontWeight.Bold, fontSize = 17.sp)

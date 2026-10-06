@@ -772,3 +772,27 @@ fun FinancialSubLineItem(label: String, amount: Double) {
 fun formatAmount(amount: Double): String {
     return String.format(Locale.US, "%,.2f", amount)
 }
+
+@Composable
+fun PaymentStatItem(color: Color, label: String, amount: Double) {
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(color)
+            )
+            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(
+            text = "₼ ${String.format(Locale.US, "%,.0f", amount)}",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}

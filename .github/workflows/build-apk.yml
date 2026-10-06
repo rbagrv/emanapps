@@ -1,0 +1,80 @@
+name: Build and Release APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build Sahibkar APK
+        run: ./gradlew :business:assembleDebug --stacktrace
+
+      - name: Prepare APK files
+        run: |
+          mkdir -p APK_FAYLLARI
+          cp business/build/outputs/apk/debug/business-debug.apk APK_FAYLLARI/e-Manager_Sahibkar_v1.3.apk
+          rm -f APK_FAYLLARI/e-Manager_Sahibkar_v1.0.apk
+          rm -f APK_FAYLLARI/e-Manager_Sahibkar_v1.1.apk
+          rm -f APK_FAYLLARI/e-Manager_Sahibkar_v1.2.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: e-Manager_Sahibkar_v1.3
+          path: APK_FAYLLARI/e-Manager_Sahibkar_v1.3.apk
+
+      - name: Commit and push updated APK
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add APK_FAYLLARI/
+          if git diff --staged --quiet; then
+            echo "No APK changes to commit"
+          else
+            git commit -m "Auto-build e-Manager_Sahibkar_v1.3.apk [skip ci]"
+            git push origin main
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/main')
+        with:
+          tag_name: v1.3
+          name: "e-Manager Sahibkar v1.3"
+          body: |
+            ### e-Manager Sahibkar v1.3 Yenilikləri:
+            - Müştəri və təchizatçı borcları real məbləğlərlə göstərilir, kliklədikdə borcun yaranma tarixi və WhatsApp xatırlatma imkanı
+            - Anbar bölməsində mənfi qalıqları və 0 qalıqları gizlətmə filtri
+            - Offline bildirişlər və arxa fonda işləyən xəbərdarlıq sistemi (AlarmManager)
+            - Maliyyə hesabatları (MZH / P&L, Balans, Cash Flow, Vergi borcları)
+            - Əməliyyat və hesabatları PDF formatında yaradıb birbaşa WhatsApp-da paylaşmaq
+            - Alt menyu strukturu təkmilləşdirildi (5 tab: Əsas, Tərəfdaşlar, Əməliyyat, Çat, Hesabatlar)
+            - Daxili çatda işçiləri `@` ilə işarələyərək tapşırıq vermək funksiyası
+          files: APK_FAYLLARI/e-Manager_Sahibkar_v1.3.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,5 +1,6 @@
 package com.example.business.ui.screens
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -63,6 +64,33 @@ fun WarehouseScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        val shareText = StringBuilder().apply {
+                            append("📦 *e-Manager Anbar Qalıq İcmalı*\n\n")
+                            append("• Cəmi çeşid: ${summary.totalProductsCount} ədəd\n")
+                            append("• Ümumi miqdar: ${String.format(Locale.US, "%,.0f", summary.totalStockQuantity)}\n")
+                            append("• Anbar dəyəri (Satış): ₼${String.format(Locale.US, "%,.2f", summary.totalStockSaleValue)}\n")
+                            append("• Anbar dəyəri (Maya): ₼${String.format(Locale.US, "%,.2f", summary.totalStockCostValue)}\n\n")
+                            if (items.any { it.isLowStock }) {
+                                append("⚠️ *Kritik Qalıqlı Məhsullar:*\n")
+                                items.filter { it.isLowStock }.forEach {
+                                    append("- ${it.name}: ${it.stock} ${it.unit}\n")
+                                }
+                            }
+                        }.toString()
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Anbar İcmalını Paylaş"))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Anbarı Paylaş",
+                            tint = EmeraldPrimary
+                        )
+                    }
+
                     IconButton(onClick = onNavigateToAddProduct) {
                         Icon(
                             imageVector = Icons.Default.AddBox,
@@ -315,6 +343,24 @@ fun WarehouseScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(-10.0, -1.0, 1.0, 5.0, 10.0).forEach { delta ->
+                            val label = if (delta > 0) "+${delta.toInt()}" else "${delta.toInt()}"
+                            SuggestionChip(
+                                onClick = {
+                                    val cur = updatedStockInput.toDoubleOrNull() ?: targetItem.stock
+                                    val next = (cur + delta).coerceAtLeast(0.0)
+                                    updatedStockInput = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
+                                },
+                                label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {

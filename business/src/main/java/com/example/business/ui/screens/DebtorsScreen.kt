@@ -2,6 +2,7 @@ package com.example.business.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -408,6 +409,7 @@ fun DebtorCard(
     onPayClick: () -> Unit,
     onCallClick: () -> Unit
 ) {
+    val context = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -482,22 +484,57 @@ fun DebtorCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.clickable { onCallClick() },
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Phone,
-                        contentDescription = "Zəng et",
-                        tint = EmeraldPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = debtor.phone,
-                        fontSize = 12.sp,
-                        color = EmeraldPrimary,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        modifier = Modifier.clickable { onCallClick() },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = "Zəng et",
+                            tint = EmeraldPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = debtor.phone,
+                            fontSize = 12.sp,
+                            color = EmeraldPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Surface(
+                        onClick = {
+                            val cleanPhone = debtor.phone.replace("+", "").replace(" ", "").replace("-", "")
+                            val msg = "Hörmətli ${debtor.fullName}, son qalıq borcunuz: ₼${String.format(Locale.US, "%,.2f", debtor.totalDebt)}. Son ödəmə tarixi: ${debtor.dueDate}. Nəzərə almağınızı xahiş edirik."
+                            val url = "https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(msg)}"
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "WhatsApp açıla bilmədi", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF25D366).copy(alpha = 0.15f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Chat,
+                                contentDescription = "WhatsApp Borc Xatırlatması",
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text("WhatsApp", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E8E44))
+                        }
+                    }
                 }
 
                 Button(

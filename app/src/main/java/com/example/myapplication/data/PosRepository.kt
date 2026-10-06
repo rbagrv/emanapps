@@ -34,9 +34,115 @@ class PosRepository(database: PosDatabase) {
     init {
         CoroutineScope(Dispatchers.IO).launch {
             productDao.getAllProducts().collect { entities ->
-                _products.value = entities.map { it.toProduct() }
+                if (entities.isEmpty()) {
+                    seedDefaultProducts()
+                } else {
+                    _products.value = entities.map { it.toProduct() }
+                }
             }
         }
+    }
+
+    private suspend fun seedDefaultProducts() {
+        val sampleProducts = listOf(
+            ProductEntity(
+                id = "prod_sample_1",
+                productNumber = "MP-101",
+                name = "Sirab Qazsız Su 0.5L",
+                sku = "476001234001",
+                barcode = "476001234001",
+                price = 0.80,
+                salePrice = 0.80,
+                costPrice = 0.45,
+                unit = "əd",
+                stock = 120.0,
+                stockQuantity = 120.0,
+                category = "İçkilər",
+                taxRate = 18.0,
+                isVatApplicable = true
+            ),
+            ProductEntity(
+                id = "prod_sample_2",
+                productNumber = "MP-102",
+                name = "Zavod Çörəyi 500g",
+                sku = "476001234002",
+                barcode = "476001234002",
+                price = 0.65,
+                salePrice = 0.65,
+                costPrice = 0.50,
+                unit = "əd",
+                stock = 60.0,
+                stockQuantity = 60.0,
+                category = "Qida",
+                taxRate = 18.0,
+                isVatApplicable = true
+            ),
+            ProductEntity(
+                id = "prod_sample_3",
+                productNumber = "MP-103",
+                name = "Azərçay Qara Çay 100g",
+                sku = "476001234003",
+                barcode = "476001234003",
+                price = 2.40,
+                salePrice = 2.40,
+                costPrice = 1.80,
+                unit = "əd",
+                stock = 45.0,
+                stockQuantity = 45.0,
+                category = "İçkilər",
+                taxRate = 18.0,
+                isVatApplicable = true
+            ),
+            ProductEntity(
+                id = "prod_sample_4",
+                productNumber = "MP-104",
+                name = "Alpen Gold Şokolad 85g",
+                sku = "476001234004",
+                barcode = "476001234004",
+                price = 1.95,
+                salePrice = 1.95,
+                costPrice = 1.30,
+                unit = "əd",
+                stock = 80.0,
+                stockQuantity = 80.0,
+                category = "Şirniyyat",
+                taxRate = 18.0,
+                isVatApplicable = true
+            ),
+            ProductEntity(
+                id = "prod_sample_5",
+                productNumber = "MP-105",
+                name = "Coca-Cola 0.5L",
+                sku = "5449000000996",
+                barcode = "5449000000996",
+                price = 1.20,
+                salePrice = 1.20,
+                costPrice = 0.85,
+                unit = "əd",
+                stock = 90.0,
+                stockQuantity = 90.0,
+                category = "İçkilər",
+                taxRate = 18.0,
+                isVatApplicable = true
+            ),
+            ProductEntity(
+                id = "prod_sample_6",
+                productNumber = "MP-106",
+                name = "Polietilen Paket (Böyük)",
+                sku = "476001234006",
+                barcode = "476001234006",
+                price = 0.10,
+                salePrice = 0.10,
+                costPrice = 0.03,
+                unit = "əd",
+                stock = 500.0,
+                stockQuantity = 500.0,
+                category = "Xırdavat",
+                taxRate = 18.0,
+                isVatApplicable = true
+            )
+        )
+        productDao.insertAll(sampleProducts)
     }
 
     suspend fun fetchProductsFromErp(search: String? = null): Boolean {

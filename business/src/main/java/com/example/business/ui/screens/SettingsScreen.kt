@@ -234,6 +234,43 @@ fun SettingsScreen(
                 }
             }
 
+            // 3.1 POS Terminal Switch
+            item {
+                Text(
+                    text = "Sistem Tətbiqləri",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(2.dp)
+                ) {
+                    SettingsRow(
+                        icon = Icons.Default.PointOfSale,
+                        title = "e-Manager POS Kassa Terminalı",
+                        subtitle = "Kassa və barkod satış terminalına keçid",
+                        onClick = {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.emanager.app")
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "Kassa Terminalı quraşdırılıb. Ana ekrandan 'e-manager POS' seçin.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    )
+                }
+            }
+
             // 4. Theme & Appearance
             item {
                 Text(

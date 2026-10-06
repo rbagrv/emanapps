@@ -44,3 +44,26 @@ data class CategoryShare(
     val percentage: Int,
     val amount: Double
 )
+
+enum class InsightType {
+    POSITIVE,
+    WARNING,
+    TIP,
+    CRITICAL
+}
+
+data class SmartInsight(
+    val id: String,
+    val title: String,
+    val description: String,
+    val type: InsightType,
+    val actionText: String? = null
+)
+
+data class TopProductStat(
+    val name: String,
+    val category: String,
+    val soldCount: Double,
+    val revenue: Double,
+    val unit: String = "ədəd"
+)

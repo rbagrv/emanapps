@@ -1,5 +1,6 @@
 package com.example.business.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,9 +17,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.business.data.model.*
 import com.example.business.ui.BusinessViewModel
 import com.example.business.ui.theme.*
 import java.util.Locale
@@ -36,6 +39,10 @@ fun DashboardScreen(
 ) {
     val summary by viewModel.summary.collectAsState()
     val companyName by viewModel.companyName.collectAsState()
+    val smartInsights by viewModel.smartInsights.collectAsState()
+    val topProducts by viewModel.topProducts.collectAsState()
+    val warehouseSummary by viewModel.warehouseSummary.collectAsState()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -157,6 +164,99 @@ fun DashboardScreen(
                         iconBg = InfoBlue,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+
+            // 2.1 BUSINESS HEALTH INDEX CARD
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Verified, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(22.dp))
+                                Text("Müəssisənin Sağlamlıq İndeksi", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = EmeraldPrimary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = "94 / 100 • Əla",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = EmeraldPrimary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { 0.94f },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = EmeraldPrimary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Likvidlik: Yüksək (2.1x)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Rentabellik: 38.4%", fontSize = 11.sp, color = EmeraldPrimary, fontWeight = FontWeight.Medium)
+                            Text("Borc ödəmə: 92%", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+            // 2.2 CRITICAL LOW STOCK WARNING BANNER
+            if (warehouseSummary.lowStockCount > 0) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = WarningOrange.copy(alpha = 0.12f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = WarningOrange, modifier = Modifier.size(28.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Kritik Anbar Xəbərdarlığı",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = WarningOrange
+                                )
+                                Text(
+                                    text = "${warehouseSummary.lowStockCount} məhsulun anbar qalığı tükənmək üzrədir.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Button(
+                                onClick = onNavigateToSuppliers,
+                                colors = ButtonDefaults.buttonColors(containerColor = WarningOrange),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Sifariş Et", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -309,6 +409,201 @@ fun DashboardScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // 4.1 SMART BUSINESS INSIGHTS
+            if (smartInsights.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(2.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Lightbulb, contentDescription = null, tint = WarningOrange, modifier = Modifier.size(22.dp))
+                                Text(
+                                    text = "Sahibkarın Ağıllı Analitik Qeydləri",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                smartInsights.forEach { insight ->
+                                    val iconColor = when (insight.type) {
+                                        InsightType.POSITIVE -> ProfitGreen
+                                        InsightType.WARNING -> WarningOrange
+                                        InsightType.CRITICAL -> LossRed
+                                        InsightType.TIP -> InfoBlue
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(top = 2.dp)
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(iconColor)
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = insight.title,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = insight.description,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        insight.actionText?.let { actionLabel ->
+                                            TextButton(
+                                                onClick = {
+                                                    when (actionLabel) {
+                                                        "Debitorlara Bax" -> onNavigateToDebtors()
+                                                        "Anbara Keç" -> {} // Can switch tab
+                                                        "Hesabatlara Bax" -> onNavigateToReports()
+                                                    }
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                            ) {
+                                                Text(actionLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4.2 TOP SELLING PRODUCTS
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Ən Çox Satan Məhsullar (Top 4)",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Dövriyyə payı",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            topProducts.forEach { prod ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = prod.name, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                        Text(text = "${prod.category} • ${prod.soldCount.toInt()} ${prod.unit}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(
+                                        text = "₼ ${String.format(Locale.US, "%,.2f", prod.revenue)}",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = EmeraldPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4.3 POS TERMINAL CROSS-APP BANNER
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.emanager.app")
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "Kassa Terminalı quraşdırılıb. Ana ekrandan 'e-manager POS' seçin.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(46.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.PointOfSale,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "e-Manager POS Kassa Terminalı",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = "Kassirlərin satış və qəbz çap terminalına sürətli keçid",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+
+                        Icon(
+                            imageVector = Icons.Default.OpenInNew,
+                            contentDescription = "Aç",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     }
                 }
             }

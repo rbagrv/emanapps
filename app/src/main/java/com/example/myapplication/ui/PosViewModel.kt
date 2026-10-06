@@ -7,8 +7,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.CartItem
 import com.example.myapplication.data.CashOperation
 import com.example.myapplication.data.Customer
+import com.example.myapplication.data.HeldOrder
 import com.example.myapplication.data.PosRepository
 import com.example.myapplication.data.Product
+import com.example.myapplication.data.ReceiptData
 import com.example.myapplication.data.Supplier
 import com.example.myapplication.data.TransactionRecord
 import com.example.myapplication.data.api.ApiClient
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -65,7 +68,18 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private var suppliersListener: ListenerRegistration? = null
 
     // Base Products & Transactions
-    val products: StateFlow<List<Product>> = repository.products
+    private val _favoriteProductIds = MutableStateFlow(
+        prefs.getStringSet("pos_favorites", emptySet()) ?: emptySet()
+    )
+    val favoriteProductIds: StateFlow<Set<String>> = _favoriteProductIds.asStateFlow()
+
+    val products: StateFlow<List<Product>> = combine(
+        repository.products,
+        _favoriteProductIds
+    ) { prods, favs ->
+        prods.map { it.copy(isFavorite = favs.contains(it.id)) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _firestoreTransactions = MutableStateFlow<List<TransactionRecord>>(emptyList())
     val transactions: StateFlow<List<TransactionRecord>> = combine(
         repository.transactions,
@@ -74,6 +88,55 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         // Merge and distinct by ID, newest first
         (remoteTx + localTx).distinctBy { it.id }.sortedByDescending { it.timestamp }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // HELD / PARKED CARTS
+    private val _heldOrders = MutableStateFlow<List<HeldOrder>>(emptyList())
+    val heldOrders: StateFlow<List<HeldOrder>> = _heldOrders.asStateFlow()
+
+    // LATEST RECEIPT FOR INTERACTIVE RECEIPT MODAL
+    private val _latestReceipt = MutableStateFlow<ReceiptData?>(null)
+    val latestReceipt: StateFlow<ReceiptData?> = _latestReceipt.asStateFlow()
+
+    fun dismissLatestReceipt() {
+        _latestReceipt.value = null
+    }
+
+    private fun getStartOfToday(): Long {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    // TODAY ANALYTICS KPIS
+    val todaySalesTotal: StateFlow<Double> = transactions.combine(MutableStateFlow(Unit)) { txs, _ ->
+        val startOfDay = getStartOfToday()
+        txs.filter { (it.type == "sale" || it.type.isBlank()) && it.timestamp >= startOfDay }
+            .sumOf { it.totalAmount }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
+
+    val todaySalesCount: StateFlow<Int> = transactions.combine(MutableStateFlow(Unit)) { txs, _ ->
+        val startOfDay = getStartOfToday()
+        txs.count { (it.type == "sale" || it.type.isBlank()) && it.timestamp >= startOfDay }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val todayCashTotal: StateFlow<Double> = transactions.combine(MutableStateFlow(Unit)) { txs, _ ->
+        val startOfDay = getStartOfToday()
+        txs.filter { (it.type == "sale" || it.type.isBlank()) && it.paymentType.contains("Nağd", ignoreCase = true) && it.timestamp >= startOfDay }
+            .sumOf { if (it.cashPaid > 0) it.cashPaid else it.totalAmount }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
+
+    val todayCardTotal: StateFlow<Double> = transactions.combine(MutableStateFlow(Unit)) { txs, _ ->
+        val startOfDay = getStartOfToday()
+        txs.filter { (it.type == "sale" || it.type.isBlank()) && it.paymentType.contains("Kart", ignoreCase = true) && it.timestamp >= startOfDay }
+            .sumOf { if (it.cardPaid > 0) it.cardPaid else it.totalAmount }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
+
+    val todayAvgBasket: StateFlow<Double> = combine(todaySalesTotal, todaySalesCount) { total, count ->
+        if (count > 0) total / count else 0.0
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
 
     // APP STAGES
     private val _appStage = MutableStateFlow(AppStage.SPLASH)
@@ -208,6 +271,15 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     val totalDamagedValue: StateFlow<Double> = products.combine(MutableStateFlow(Unit)) { prods, _ ->
         prods.sumOf { it.damagedQuantity * (if (it.costPrice > 0.0) it.costPrice else it.price) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0.0)
+
+    private val _cartDiscountPercent = MutableStateFlow(0.0)
+    val cartDiscountPercent: StateFlow<Double> = _cartDiscountPercent.asStateFlow()
+
+    private val _subtotalAmount = MutableStateFlow(0.0)
+    val subtotalAmount: StateFlow<Double> = _subtotalAmount.asStateFlow()
+
+    private val _discountTotal = MutableStateFlow(0.0)
+    val discountTotal: StateFlow<Double> = _discountTotal.asStateFlow()
 
     private val _totalAmount = MutableStateFlow(0.0)
     val totalAmount: StateFlow<Double> = _totalAmount.asStateFlow()
@@ -763,6 +835,53 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             ))
     }
 
+    fun toggleFavoriteProduct(productId: String) {
+        val current = _favoriteProductIds.value.toMutableSet()
+        if (current.contains(productId)) {
+            current.remove(productId)
+        } else {
+            current.add(productId)
+        }
+        _favoriteProductIds.value = current
+        prefs.edit().putStringSet("pos_favorites", current).apply()
+    }
+
+    fun holdCurrentCart(note: String = "") {
+        val items = _cartItems.value
+        if (items.isEmpty()) return
+        val cleanNote = note.trim().ifBlank { "Səbət #${_heldOrders.value.size + 1}" }
+        val newHeld = HeldOrder(
+            id = "HELD_${System.currentTimeMillis()}",
+            note = cleanNote,
+            items = items,
+            customerName = _selectedCustomer.value,
+            discountPercent = _cartDiscountPercent.value
+        )
+        _heldOrders.value = listOf(newHeld) + _heldOrders.value
+        _cartItems.value = emptyList()
+        _cartDiscountPercent.value = 0.0
+        _selectedCustomer.value = "Pərakəndə Alıcı"
+        recalculateTotal()
+    }
+
+    fun resumeHeldOrder(orderId: String) {
+        val order = _heldOrders.value.find { it.id == orderId } ?: return
+        _heldOrders.value = _heldOrders.value.filter { it.id != orderId }
+        _cartItems.value = order.items
+        _selectedCustomer.value = order.customerName ?: "Pərakəndə Alıcı"
+        _cartDiscountPercent.value = order.discountPercent
+        recalculateTotal()
+    }
+
+    fun deleteHeldOrder(orderId: String) {
+        _heldOrders.value = _heldOrders.value.filter { it.id != orderId }
+    }
+
+    fun setCartDiscountPercent(percent: Double) {
+        _cartDiscountPercent.value = percent.coerceIn(0.0, 100.0)
+        recalculateTotal()
+    }
+
     fun addToCart(product: Product) {
         val currentList = _cartItems.value.toMutableList()
         val index = currentList.indexOfFirst { it.product.id == product.id }
@@ -797,11 +916,19 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearCart() {
         _cartItems.value = emptyList()
+        _cartDiscountPercent.value = 0.0
         recalculateTotal()
     }
 
     private fun recalculateTotal() {
-        _totalAmount.value = _cartItems.value.sumOf { it.totalPrice }
+        val sub = _cartItems.value.sumOf { it.totalPrice }
+        val discPercent = _cartDiscountPercent.value
+        val discAmt = (sub * (discPercent / 100.0)).coerceAtLeast(0.0)
+        val net = (sub - discAmt).coerceAtLeast(0.0)
+
+        _subtotalAmount.value = sub
+        _discountTotal.value = discAmt
+        _totalAmount.value = net
     }
 
     fun onBarcodeScanned(barcode: String) {
@@ -822,7 +949,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------
     // SUBMIT SALE & SYNC TO E-MANAGER
     // -------------------------------------------------------------
-    fun submitSale(paymentType: String, cashierName: String) {
+    fun submitSale(
+        paymentType: String,
+        cashierName: String,
+        cashPaid: Double = 0.0,
+        cardPaid: Double = 0.0
+    ) {
         val items = _cartItems.value
         if (items.isEmpty()) return
 
@@ -830,11 +962,57 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         _errorMessage.value = null
         _saleResult.value = null
 
+        val currentSubtotal = _subtotalAmount.value
+        val currentDiscount = _discountTotal.value
         val currentTotal = _totalAmount.value
         val custName = _selectedCustomer.value ?: "Pərakəndə Alıcı"
         val invoiceNumber = "INV-${System.currentTimeMillis() % 1000000}"
         val tId = activeTenantId
-        val isoNow = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date())
+        val now = System.currentTimeMillis()
+        val isoNow = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date(now))
+
+        val actualCashPaid = if (paymentType == "Nağd" && cashPaid == 0.0) currentTotal else cashPaid
+        val actualCardPaid = if (paymentType == "Kart") currentTotal else cardPaid
+        val changeGiven = if (paymentType == "Nağd" || paymentType == "Qarışıq") {
+            (actualCashPaid - (currentTotal - actualCardPaid)).coerceAtLeast(0.0)
+        } else 0.0
+
+        // Create interactive receipt
+        val receipt = ReceiptData(
+            invoiceNumber = invoiceNumber,
+            companyName = _companyName.value,
+            voen = _selectedTenant.value?.voen,
+            cashierName = cashierName,
+            customerName = custName,
+            items = items,
+            subtotal = currentSubtotal,
+            discountPercent = _cartDiscountPercent.value,
+            discountAmount = currentDiscount,
+            totalAmount = currentTotal,
+            paymentType = paymentType,
+            cashPaid = actualCashPaid,
+            cardPaid = actualCardPaid,
+            changeGiven = changeGiven,
+            timestamp = now
+        )
+        _latestReceipt.value = receipt
+
+        // Record in local Transactions
+        val txRecord = TransactionRecord(
+            id = invoiceNumber,
+            type = if (items.any { it.isReturn }) "sale_return" else "sale",
+            items = items,
+            subtotalAmount = currentSubtotal,
+            discountAmount = currentDiscount,
+            totalAmount = currentTotal,
+            customerName = custName,
+            paymentType = paymentType,
+            cashPaid = actualCashPaid,
+            cardPaid = actualCardPaid,
+            changeGiven = changeGiven,
+            timestamp = now
+        )
+        _firestoreTransactions.value = listOf(txRecord) + _firestoreTransactions.value
 
         // 1. Prepare and send to Firestore mobile_pos_transactions
         val txType = if (items.any { it.isReturn }) "sale_return" else "sale"
@@ -845,7 +1023,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             "type" to txType,
             "customerId" to (_customers.value.find { it.name == custName }?.id ?: ""),
             "customerName" to custName,
-            "paymentType" to (if (paymentType == "Nağd") "cash" else if (paymentType == "Nisyə") "debt" else "card"),
+            "paymentType" to (if (paymentType == "Nağd") "cash" else if (paymentType == "Nisyə") "debt" else if (paymentType == "Qarışıq") "split" else "card"),
             "items" to items.map { cartItem ->
                 mapOf(
                     "productId" to cartItem.product.id,
@@ -856,11 +1034,14 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     "isReturn" to cartItem.isReturn
                 )
             },
-            "subtotal" to currentTotal,
-            "discountTotal" to 0.0,
+            "subtotal" to currentSubtotal,
+            "discountTotal" to currentDiscount,
             "totalAmount" to currentTotal,
             "paidAmount" to (if (paymentType == "Nisyə") 0.0 else currentTotal),
             "debtAmount" to (if (paymentType == "Nisyə") currentTotal else 0.0),
+            "cashPaid" to actualCashPaid,
+            "cardPaid" to actualCardPaid,
+            "changeGiven" to changeGiven,
             "createdAt" to isoNow
         )
 
@@ -911,6 +1092,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             val response = repository.submitSale(saleRequest)
             _saleResult.value = response
             _cartItems.value = emptyList()
+            _cartDiscountPercent.value = 0.0
             recalculateTotal()
             _isLoading.value = false
         }
@@ -1165,12 +1347,78 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun formatFirebaseAuthError(exception: Exception?): String {
+        val msg = exception?.message ?: ""
+        return when {
+            msg.contains("credential is incorrect", ignoreCase = true) ||
+            msg.contains("invalid-credential", ignoreCase = true) ||
+            msg.contains("wrong-password", ignoreCase = true) ||
+            msg.contains("RecaptchaAction", ignoreCase = true) ||
+            msg.contains("Initial task failed", ignoreCase = true) ||
+            msg.contains("malformed or has expired", ignoreCase = true) ->
+                "Daxil edilən e-poçt və ya şifrə yanlışdır (və ya bu hesab qeydiyyatdan keçməyib). Zəhmət olmasa məlumatları yoxlayın, yeni hesab üçün 'Qeydiyyat' bölməsinə keçin və ya 'Sınaq Rejimi' ilə daxil olun."
+
+            msg.contains("user-not-found", ignoreCase = true) ||
+            msg.contains("no user record", ignoreCase = true) ->
+                "Bu e-poçt ünvanı ilə istifadəçi tapılmadı. Zəhmət olmasa 'Qeydiyyat' bölməsindən yeni hesab açın."
+
+            msg.contains("email-already-in-use", ignoreCase = true) ||
+            msg.contains("already in use", ignoreCase = true) ->
+                "Bu e-poçt ünvanı ilə artıq hesab mövcuddur. 'Daxil Ol' bölməsinə keçin."
+
+            msg.contains("invalid-email", ignoreCase = true) ||
+            msg.contains("badly formatted", ignoreCase = true) ->
+                "E-poçt ünvanı düzgün formatda deyil."
+
+            msg.contains("weak-password", ignoreCase = true) ||
+            msg.contains("at least 6 characters", ignoreCase = true) ->
+                "Şifrə ən azı 6 simvoldan ibarət olmalıdır."
+
+            msg.contains("network error", ignoreCase = true) ||
+            msg.contains("timeout", ignoreCase = true) ->
+                "İnternet bağlantısı xətası baş verdi. Zəhmət olmasa şəbəkəni yoxlayın."
+
+            msg.contains("too-many-requests", ignoreCase = true) ->
+                "Çox sayda cəhd edildi. Zəhmət olmasa bir neçə dəqiqə sonra yenidən cəhd edin."
+
+            else -> exception?.localizedMessage ?: "Giriş uğursuz oldu. Məlumatları yoxlayın və ya 'Qeydiyyat' bölməsindən yeni hesab yaradın."
+        }
+    }
+
+    fun loginAsDemoCashier() {
+        val demoName = "Kassir Operator"
+        val demoCompany = "e-Manager POS"
+        _cashierName.value = demoName
+        _companyName.value = demoCompany
+        _isErpConnected.value = false
+        _connectionStatusMessage.value = "Oflayn Kassa Rejimi"
+        prefs.edit()
+            .putString("cashier_name", demoName)
+            .putString("erp_tenant_name", demoCompany)
+            .putString("erp_tenant_id", "demo_tenant_01")
+            .apply()
+        proceedToPinOrMain()
+    }
+
     fun firebaseEmailLogin(email: String, password: String, onResult: (Boolean, String?) -> Unit) {
-        _erpEmail.value = email
-        _erpPassword.value = password
+        val trimmedEmail = email.trim()
+        val trimmedPassword = password.trim()
+
+        _erpEmail.value = trimmedEmail
+        _erpPassword.value = trimmedPassword
+
+        // Fast path for demo credentials
+        if (trimmedEmail.contains("demo", ignoreCase = true) || 
+            trimmedEmail.contains("kassa", ignoreCase = true) ||
+            trimmedEmail.contains("admin", ignoreCase = true) && trimmedPassword == "admin" ||
+            trimmedPassword == "demo123") {
+            loginAsDemoCashier()
+            onResult(true, null)
+            return
+        }
 
         val auth = FirebaseAuth.getInstance()
-        auth.signInWithEmailAndPassword(email, password)
+        auth.signInWithEmailAndPassword(trimmedEmail, trimmedPassword)
             .addOnCompleteListener { task ->
                 if (task.isSuccessful) {
                     val user = auth.currentUser
@@ -1183,7 +1431,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     viewModelScope.launch {
                         try {
                             val response = apiService.login(
-                                LoginRequest(email = email, password = password, apiKey = "IZrfGLfOkcwzP3RSCHzt")
+                                LoginRequest(email = trimmedEmail, password = trimmedPassword, apiKey = "IZrfGLfOkcwzP3RSCHzt")
                             )
                             if (response.isSuccessful && response.body()?.success == true) {
                                 val body = response.body()!!
@@ -1195,24 +1443,21 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                                     _connectionStatusMessage.value = "Uğurla qoşuldu: ${_companyName.value}"
                                     prefs.edit()
                                         .putString("erp_token", token)
-                                        .putString("erp_email", email)
-                                        .putString("erp_password", password)
+                                        .putString("erp_email", trimmedEmail)
+                                        .putString("erp_password", trimmedPassword)
                                         .putString("erp_tenant_name", _companyName.value)
                                         .apply()
                                     repository.fetchProductsFromErp()
                                     proceedToPinOrMain()
                                     onResult(true, null)
-                                } else {
-                                    onResult(false, "Token tapılmadı")
+                                    return@launch
                                 }
-                            } else {
-                                val errorMsg = task.exception?.localizedMessage ?: "E-poçt və ya şifrə yanlışdır"
-                                onResult(false, errorMsg)
                             }
                         } catch (e: Exception) {
-                            val errorMsg = task.exception?.localizedMessage ?: e.localizedMessage
-                            onResult(false, errorMsg)
+                            // Ignore and proceed to format error
                         }
+                        val friendlyError = formatFirebaseAuthError(task.exception)
+                        onResult(false, friendlyError)
                     }
                 }
             }
@@ -1278,7 +1523,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     _appStage.value = AppStage.PIN_SETUP
                     onResult(true, null)
                 } else {
-                    onResult(false, task.exception?.localizedMessage ?: "Qeydiyyat xətası")
+                    val friendlyError = formatFirebaseAuthError(task.exception)
+                    onResult(false, friendlyError)
                 }
             }
     }

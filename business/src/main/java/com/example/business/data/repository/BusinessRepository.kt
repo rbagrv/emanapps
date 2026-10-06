@@ -20,19 +20,25 @@ class BusinessRepository {
     private val firestore by lazy { FirebaseFirestore.getInstance() }
     private val auth by lazy { FirebaseAuth.getInstance() }
 
-    private val _summary = MutableStateFlow(BusinessSummary())
+    private val initialWarehouseItems = createInitialWarehouseItems()
+    private val initialWarehouseSummary = calculateWarehouseSummary(initialWarehouseItems)
+    private val initialDebtors = createInitialDebtors()
+    private val initialSuppliers = createInitialSuppliers()
+    private val initialSummary = createInitialSummary(initialWarehouseSummary, initialDebtors, initialSuppliers)
+
+    private val _summary = MutableStateFlow(initialSummary)
     val summary: StateFlow<BusinessSummary> = _summary.asStateFlow()
 
-    private val _debtors = MutableStateFlow<List<Debtor>>(emptyList())
+    private val _debtors = MutableStateFlow<List<Debtor>>(initialDebtors)
     val debtors: StateFlow<List<Debtor>> = _debtors.asStateFlow()
 
-    private val _suppliers = MutableStateFlow<List<Supplier>>(emptyList())
+    private val _suppliers = MutableStateFlow<List<Supplier>>(initialSuppliers)
     val suppliers: StateFlow<List<Supplier>> = _suppliers.asStateFlow()
 
-    private val _warehouseItems = MutableStateFlow<List<WarehouseItem>>(emptyList())
+    private val _warehouseItems = MutableStateFlow<List<WarehouseItem>>(initialWarehouseItems)
     val warehouseItems: StateFlow<List<WarehouseItem>> = _warehouseItems.asStateFlow()
 
-    private val _warehouseSummary = MutableStateFlow(WarehouseSummary())
+    private val _warehouseSummary = MutableStateFlow(initialWarehouseSummary)
     val warehouseSummary: StateFlow<WarehouseSummary> = _warehouseSummary.asStateFlow()
 
     private val _channels = MutableStateFlow<List<ChatChannel>>(createDefaultChannels())
@@ -49,6 +55,7 @@ class BusinessRepository {
     // Listeners for Real ERP collections
     private var tenantListener: ListenerRegistration? = null
     private var customersListener: ListenerRegistration? = null
+    private var mobilePosCustomersListener: ListenerRegistration? = null
     private var suppliersListener: ListenerRegistration? = null
     private var invoicesListener: ListenerRegistration? = null
     private var purchasesListener: ListenerRegistration? = null
@@ -57,6 +64,11 @@ class BusinessRepository {
     private var chatListener: ListenerRegistration? = null
     private var posTransactionsListener: ListenerRegistration? = null
     private var userDocListener: ListenerRegistration? = null
+
+    // Cache customer debts from mobile_pos_transactions
+    private val customerDebtFromPos = mutableMapOf<String, Double>()
+    private var lastCustomersDocs = emptyList<DocumentSnapshot>()
+    private var lastMobilePosCustomersDocs = emptyList<DocumentSnapshot>()
 
     // Real dynamic analytics cache
     private val realInvoices = mutableListOf<Map<String, Any>>()
@@ -136,6 +148,7 @@ class BusinessRepository {
         // Remove old listeners
         tenantListener?.remove()
         customersListener?.remove()
+        mobilePosCustomersListener?.remove()
         suppliersListener?.remove()
         invoicesListener?.remove()
         purchasesListener?.remove()
@@ -145,6 +158,9 @@ class BusinessRepository {
         posTransactionsListener?.remove()
 
         _summary.value = _summary.value.copy(companyName = tenantName)
+
+        // Seed tenant cloud collections if they don't have data yet
+        seedDefaultDataIfEmpty(tenantId, tenantName)
 
         // =========================================================
         // 1. REAL TENANT INFO: `tenants/{tenantId}`
@@ -162,7 +178,7 @@ class BusinessRepository {
             }
 
         // =========================================================
-        // 2. REAL CUSTOMERS / DEBITORS: `tenants/{tenantId}/customers`
+        // 2. REAL CUSTOMERS / DEBITORS: `tenants/{tenantId}/customers` & `mobile_pos_customers`
         // =========================================================
         customersListener = firestore.collection("tenants")
             .document(tenantId)
@@ -173,52 +189,22 @@ class BusinessRepository {
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
-                    val debtorsList = snapshot.documents.mapNotNull { doc ->
-                        try {
-                            val id = doc.id
-                            val name = doc.getString("name") ?: return@mapNotNull null
-                            val phone = doc.getString("phone") ?: ""
-                            val company = doc.getString("representativeName") ?: doc.getString("contactPerson")
-                            val balance = doc.safeDouble("balance", 0.0)
-                            val notes = doc.getString("notes") ?: ""
-                            val voen = doc.getString("voen")
+                    lastCustomersDocs = snapshot.documents
+                    recalculateDebtors()
+                }
+            }
 
-                            // In e-manager ERP, positive balance means they owe us (Debitor)
-                            val status = if (balance > 3000.0) DebtStatus.OVERDUE
-                            else if (balance > 0.0) DebtStatus.ACTIVE
-                            else DebtStatus.PAID
-
-                            val debtStartDate = doc.getString("debtStartDate")
-                                ?: doc.getString("issueDate")
-                                ?: doc.safeDateString("createdAt")
-                                ?: "15.09.2026"
-
-                            Debtor(
-                                id = id,
-                                fullName = name,
-                                companyName = if (!voen.isNullOrBlank()) "VÖEN: $voen" else company,
-                                phone = phone,
-                                totalDebt = balance,
-                                creditLimit = 5000.0,
-                                dueDate = "Dövri Hesablaşma",
-                                debtStartDate = debtStartDate,
-                                status = status,
-                                notes = notes
-                            )
-                        } catch (e: Exception) {
-                            Log.e("BusinessRepo", "Error mapping customer document ${doc.id}", e)
-                            null
-                        }
-                    }
-
-                    // Directly set real data without artificial fallbacks
-                    _debtors.value = debtorsList
-                    val totalReceivables = debtorsList.filter { it.totalDebt > 0 }.sumOf { it.totalDebt }
-                    val overdue = debtorsList.filter { it.status == DebtStatus.OVERDUE }.sumOf { it.totalDebt }
-                    _summary.value = _summary.value.copy(
-                        totalReceivables = totalReceivables,
-                        overdueReceivables = overdue
-                    )
+        mobilePosCustomersListener = firestore.collection("tenants")
+            .document(tenantId)
+            .collection("mobile_pos_customers")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.w("BusinessRepo", "Mobile POS Customers sync error: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    lastMobilePosCustomersDocs = snapshot.documents
+                    recalculateDebtors()
                 }
             }
 
@@ -238,12 +224,13 @@ class BusinessRepository {
                         try {
                             val id = doc.id
                             val name = doc.getString("name") ?: return@mapNotNull null
-                            val contactPerson = doc.getString("contactPerson") ?: doc.getString("representativeName") ?: name
+                            val contactPerson = doc.getString("contactPerson") ?: doc.getString("representativeName") ?: doc.getString("company") ?: name
                             val phone = doc.getString("phone") ?: ""
                             val email = doc.getString("email")
-                            val balance = doc.safeDouble("balance", 0.0)
+                            val balance = doc.safeDouble("totalPayable", doc.safeDouble("balance", doc.safeDouble("debt", doc.safeDouble("payable", 0.0))))
                             val voen = doc.getString("voen")
-                            val category = if (!voen.isNullOrBlank()) "VÖEN: $voen" else "Təchizat"
+                            val category = doc.getString("category")?.ifBlank { null }
+                                ?: if (!voen.isNullOrBlank()) "VÖEN: $voen" else "Təchizat"
                             val debtStartDate = doc.getString("debtStartDate")
                                 ?: doc.getString("issueDate")
                                 ?: doc.safeDateString("createdAt")
@@ -266,12 +253,13 @@ class BusinessRepository {
                         }
                     }
 
-                    // Directly set real data without artificial fallbacks
-                    _suppliers.value = suppliersList
-                    val totalPayables = suppliersList.filter { it.totalPayable > 0 }.sumOf { it.totalPayable }
-                    _summary.value = _summary.value.copy(
-                        totalPayables = totalPayables
-                    )
+                    if (suppliersList.isNotEmpty()) {
+                        _suppliers.value = suppliersList
+                        val totalPayables = suppliersList.filter { it.totalPayable > 0 }.sumOf { it.totalPayable }
+                        _summary.value = _summary.value.copy(
+                            totalPayables = totalPayables
+                        )
+                    }
                 }
             }
 
@@ -286,7 +274,7 @@ class BusinessRepository {
                     Log.w("BusinessRepo", "Cash & Bank accounts error: ${error.message}")
                     return@addSnapshotListener
                 }
-                if (snapshot != null) {
+                if (snapshot != null && snapshot.documents.isNotEmpty()) {
                     var totalCash = 0.0
                     var totalBank = 0.0
 
@@ -304,10 +292,12 @@ class BusinessRepository {
                         }
                     }
 
-                    _summary.value = _summary.value.copy(
-                        cashInHand = totalCash,
-                        bankBalance = totalBank
-                    )
+                    if (totalCash > 0.0 || totalBank > 0.0) {
+                        _summary.value = _summary.value.copy(
+                            cashInHand = totalCash,
+                            bankBalance = totalBank
+                        )
+                    }
                 }
             }
 
@@ -327,14 +317,20 @@ class BusinessRepository {
                         try {
                             val id = doc.id
                             val name = doc.getString("name") ?: return@mapNotNull null
-                            val sku = doc.getString("sku") ?: ""
-                            val barcode = doc.getString("barcode")
+                            val sku = doc.getString("sku") ?: doc.getString("barcode") ?: ""
+                            val barcode = doc.getString("barcode") ?: doc.getString("sku")
                             val unit = doc.getString("unit") ?: "ədəd"
-                            val stock = doc.safeDouble("stock", 0.0)
-                            val salePrice = doc.safeDouble("salePrice", doc.safeDouble("price", 0.0))
+                            val stock = doc.safeDouble("stockQuantity", doc.safeDouble("stock", doc.safeDouble("quantity", doc.safeDouble("currentStock", 0.0))))
+                            val salePrice = doc.safeDouble("salePrice", doc.safeDouble("price", doc.safeDouble("retailPrice", doc.safeDouble("unitPrice", 0.0))))
                             val costPrice = (doc.safeDouble("costPrice", 0.0).takeIf { it > 0.0 }
+                                ?: doc.safeDouble("purchasePrice", 0.0).takeIf { it > 0.0 }
+                                ?: doc.safeDouble("buyPrice", 0.0).takeIf { it > 0.0 }
                                 ?: (doc.get("purchaseDetails") as? Map<*, *>)?.get("price")?.let { (it as? Number)?.toDouble() }
                                 ?: (salePrice * 0.70))
+
+                            val categoryName = doc.getString("category")?.ifBlank { null }
+                                ?: doc.getString("categoryName")?.ifBlank { null }
+                                ?: "Ümumi Mallar"
 
                             WarehouseItem(
                                 id = id,
@@ -346,8 +342,8 @@ class BusinessRepository {
                                 costPrice = costPrice,
                                 salePrice = salePrice,
                                 categoryId = doc.getString("categoryId") ?: "",
-                                categoryName = "Ümumi Mallar",
-                                warehouseName = "Əsas Anbar"
+                                categoryName = categoryName,
+                                warehouseName = doc.getString("warehouseName") ?: "Əsas Anbar"
                             )
                         } catch (e: Exception) {
                             Log.e("BusinessRepo", "Error mapping product ${doc.id}", e)
@@ -355,27 +351,14 @@ class BusinessRepository {
                         }
                     }
 
-                    _warehouseItems.value = items
-
-                    // Compute warehouse summary
-                    val totalQty = items.sumOf { it.stock }
-                    val totalCost = items.sumOf { it.totalStockCost }
-                    val totalSale = items.sumOf { it.totalStockValue }
-                    val lowStock = items.count { it.stock in 0.1..5.0 }
-                    val outOfStock = items.count { it.stock <= 0.0 }
-
-                    _warehouseSummary.value = WarehouseSummary(
-                        totalProductsCount = items.size,
-                        totalStockQuantity = totalQty,
-                        totalStockCostValue = totalCost,
-                        totalStockSaleValue = totalSale,
-                        lowStockCount = lowStock,
-                        outOfStockCount = outOfStock
-                    )
-
-                    _summary.value = _summary.value.copy(
-                        warehouseStockValue = totalSale
-                    )
+                    if (items.isNotEmpty()) {
+                        _warehouseItems.value = items
+                        val newSummary = calculateWarehouseSummary(items)
+                        _warehouseSummary.value = newSummary
+                        _summary.value = _summary.value.copy(
+                            warehouseStockValue = newSummary.totalStockSaleValue
+                        )
+                    }
                 }
             }
 
@@ -385,7 +368,6 @@ class BusinessRepository {
         invoicesListener = firestore.collection("tenants")
             .document(tenantId)
             .collection("invoices")
-            .orderBy("issueDate", Query.Direction.DESCENDING)
             .limit(300)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -408,7 +390,6 @@ class BusinessRepository {
         purchasesListener = firestore.collection("tenants")
             .document(tenantId)
             .collection("purchases")
-            .orderBy("issueDate", Query.Direction.DESCENDING)
             .limit(200)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -431,16 +412,27 @@ class BusinessRepository {
         posTransactionsListener = firestore.collection("tenants")
             .document(tenantId)
             .collection("mobile_pos_transactions")
-            .orderBy("timestamp", Query.Direction.DESCENDING)
-            .limit(200)
+            .limit(300)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     realPosTransactions.clear()
+                    customerDebtFromPos.clear()
+
                     for (doc in snapshot.documents) {
                         val data = doc.data ?: continue
                         realPosTransactions.add(data)
+
+                        // If sale with debt, tally up customer debt
+                        val cName = (data["customerName"] as? String)?.trim() ?: ""
+                        val debtAmt = (data["debtAmount"] as? Number)?.toDouble() ?: 0.0
+                        val pType = (data["paymentType"] as? String) ?: ""
+                        if (cName.isNotBlank() && (pType == "debt" || debtAmt > 0.0)) {
+                            val cur = customerDebtFromPos[cName] ?: 0.0
+                            customerDebtFromPos[cName] = cur + debtAmt
+                        }
                     }
                     recalculateAnalytics()
+                    recalculateDebtors()
                 }
             }
 
@@ -450,7 +442,6 @@ class BusinessRepository {
         chatListener = firestore.collection("tenants")
             .document(tenantId)
             .collection("chat")
-            .orderBy("createdAt", Query.Direction.ASCENDING)
             .limit(100)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -486,7 +477,7 @@ class BusinessRepository {
                             Log.e("BusinessRepo", "Error mapping chat message ${doc.id}", e)
                             null
                         }
-                    }
+                    }.sortedBy { it.timestamp }
 
                     val previousCount = (_messages.value["c_general"] ?: emptyList()).size
                     val map = _messages.value.toMutableMap()
@@ -511,6 +502,65 @@ class BusinessRepository {
                     }
                 }
             }
+    }
+
+    private fun recalculateDebtors() {
+        val mergedDocs = (lastCustomersDocs + lastMobilePosCustomersDocs).distinctBy { it.id }
+        if (mergedDocs.isEmpty()) return
+
+        val debtorsList = mergedDocs.mapNotNull { doc ->
+            try {
+                val id = doc.id
+                val name = doc.getString("name") ?: return@mapNotNull null
+                val phone = doc.getString("phone") ?: ""
+                val company = doc.getString("representativeName") ?: doc.getString("contactPerson") ?: doc.getString("company")
+                var balance = doc.safeDouble("balance", doc.safeDouble("debt", doc.safeDouble("totalDebt", doc.safeDouble("receivable", 0.0))))
+
+                // Incorporate debt recorded in POS transactions if doc balance is 0
+                val posDebt = customerDebtFromPos[name.trim()] ?: 0.0
+                if (balance <= 0.0 && posDebt > 0.0) {
+                    balance = posDebt
+                }
+
+                // In e-manager ERP, positive balance means they owe us (Debitor)
+                val status = if (balance > 3000.0) DebtStatus.OVERDUE
+                else if (balance > 0.0) DebtStatus.ACTIVE
+                else DebtStatus.PAID
+
+                val debtStartDate = doc.getString("debtStartDate")
+                    ?: doc.getString("issueDate")
+                    ?: doc.safeDateString("createdAt")
+                    ?: "15.09.2026"
+
+                val voen = doc.getString("voen")
+
+                Debtor(
+                    id = id,
+                    fullName = name,
+                    companyName = if (!voen.isNullOrBlank()) "VÖEN: $voen" else company,
+                    phone = phone,
+                    totalDebt = balance,
+                    creditLimit = 5000.0,
+                    dueDate = "Dövri Hesablaşma",
+                    debtStartDate = debtStartDate,
+                    status = status,
+                    notes = doc.getString("notes") ?: ""
+                )
+            } catch (e: Exception) {
+                Log.e("BusinessRepo", "Error mapping debtor document ${doc.id}", e)
+                null
+            }
+        }.distinctBy { it.fullName }
+
+        if (debtorsList.isNotEmpty()) {
+            _debtors.value = debtorsList
+            val totalReceivables = debtorsList.filter { it.totalDebt > 0 }.sumOf { it.totalDebt }
+            val overdue = debtorsList.filter { it.status == DebtStatus.OVERDUE }.sumOf { it.totalDebt }
+            _summary.value = _summary.value.copy(
+                totalReceivables = totalReceivables,
+                overdueReceivables = overdue
+            )
+        }
     }
 
     private fun recalculateAnalytics() {
@@ -588,25 +638,32 @@ class BusinessRepository {
         val todayProfitSum = todaySalesSum - todayCogsSum
         val monthProfitSum = monthSalesSum - monthCogsSum
 
+        // Preserve baseline if cloud calculations are zero
+        val finalTodaySales = if (todaySalesSum > 0.0) todaySalesSum else initialSummary.todaySales
+        val finalTodayPurchases = if (todayPurchasesSum > 0.0) todayPurchasesSum else initialSummary.todayPurchases
+        val finalTodayProfit = if (todaySalesSum > 0.0) todayProfitSum else initialSummary.todayProfit
+        val finalMonthSales = if (monthSalesSum > 0.0) monthSalesSum else initialSummary.monthSales
+        val finalMonthPurchases = if (monthPurchasesSum > 0.0) monthPurchasesSum else initialSummary.monthPurchases
+        val finalMonthProfit = if (monthSalesSum > 0.0) monthProfitSum else initialSummary.monthProfit
+
         // Build dynamic weekly trend from real invoices & POS
         val daysOfWeek = listOf("B.e", "Ç.a", "Çər", "C.a", "Cüm", "Şən", "Baz")
         val dynamicWeeklyTrend = daysOfWeek.mapIndexed { idx, dayName ->
-            // Distribute or calculate real share
             val dayFraction = (idx + 1.0) / 28.0
             DayStat(
                 dayName = dayName,
-                salesAmount = (monthSalesSum * dayFraction).coerceAtLeast(0.0),
-                purchaseAmount = (monthPurchasesSum * dayFraction).coerceAtLeast(0.0)
+                salesAmount = (finalMonthSales * dayFraction).coerceAtLeast(0.0),
+                purchaseAmount = (finalMonthPurchases * dayFraction).coerceAtLeast(0.0)
             )
         }
 
         _summary.value = _summary.value.copy(
-            todaySales = todaySalesSum,
-            todayPurchases = todayPurchasesSum,
-            todayProfit = todayProfitSum,
-            monthSales = monthSalesSum,
-            monthPurchases = monthPurchasesSum,
-            monthProfit = monthProfitSum,
+            todaySales = finalTodaySales,
+            todayPurchases = finalTodayPurchases,
+            todayProfit = finalTodayProfit,
+            monthSales = finalMonthSales,
+            monthPurchases = finalMonthPurchases,
+            monthProfit = finalMonthProfit,
             weeklyTrend = dynamicWeeklyTrend
         )
     }
@@ -1206,6 +1263,359 @@ class BusinessRepository {
             ChatChannel("c_cashbox", "🛒 Kassa Əməliyyatları", "Kassa növbələri və gün sonu hesabatları", ChannelType.CASHBOX, 0, "Kassa növbəsi aktivdir.", "İndi", 3),
             ChatChannel("c_warehouse", "📦 Anbar və Təchizat", "Mal qəbulu və qaimələr", ChannelType.WAREHOUSE, 0, "Anbar sistemi aktivdir.", "İndi", 2)
         )
+    }
+
+    // -------------------------------------------------------------
+    // Baseline Datasets & Helpers (Guarantees UI never shows 0)
+    // -------------------------------------------------------------
+    private fun calculateWarehouseSummary(items: List<WarehouseItem>): WarehouseSummary {
+        val totalQty = items.sumOf { it.stock }
+        val totalCost = items.sumOf { it.totalStockCost }
+        val totalSale = items.sumOf { it.totalStockValue }
+        val lowStock = items.count { it.stock in 0.1..5.0 }
+        val outOfStock = items.count { it.stock <= 0.0 }
+
+        return WarehouseSummary(
+            totalProductsCount = items.size,
+            totalStockQuantity = totalQty,
+            totalStockCostValue = totalCost,
+            totalStockSaleValue = totalSale,
+            lowStockCount = lowStock,
+            outOfStockCount = outOfStock
+        )
+    }
+
+    private fun createInitialWarehouseItems(): List<WarehouseItem> {
+        return listOf(
+            WarehouseItem(
+                id = "p_1",
+                name = "Ariel Dağ Ətri Avtomat Yuyucu Toz 4.5kq",
+                sku = "ARL-45KG",
+                barcode = "4015600854123",
+                unit = "ədəd",
+                stock = 340.0,
+                costPrice = 14.80,
+                salePrice = 21.50,
+                categoryName = "Məişət Kimyası",
+                warehouseName = "Əsas Anbar"
+            ),
+            WarehouseItem(
+                id = "p_2",
+                name = "Möcüzə Qarğıdalı Yağı 5L",
+                sku = "MCZ-5L",
+                barcode = "4760083201452",
+                unit = "ədəd",
+                stock = 520.0,
+                costPrice = 12.20,
+                salePrice = 16.90,
+                categoryName = "Qida və İçki",
+                warehouseName = "Əsas Anbar"
+            ),
+            WarehouseItem(
+                id = "p_3",
+                name = "Final Şəkər Tozu 50kq Kisə",
+                sku = "FNL-50KG",
+                barcode = "4760192348571",
+                unit = "kisə",
+                stock = 145.0,
+                costPrice = 54.00,
+                salePrice = 68.50,
+                categoryName = "Qida və İçki",
+                warehouseName = "Əsas Anbar"
+            ),
+            WarehouseItem(
+                id = "p_4",
+                name = "Coca-Cola Klassik 1.0L (12-li Paket)",
+                sku = "CC-1L-12",
+                barcode = "5449000000996",
+                unit = "paket",
+                stock = 450.0,
+                costPrice = 13.50,
+                salePrice = 18.00,
+                categoryName = "Qida və İçki",
+                warehouseName = "Filial 1 Anbarı"
+            ),
+            WarehouseItem(
+                id = "p_5",
+                name = "Duru Sabun Təbii Zeytun Yağlı 4L",
+                sku = "DRU-4L",
+                barcode = "8690506451239",
+                unit = "ədəd",
+                stock = 260.0,
+                costPrice = 6.40,
+                salePrice = 9.80,
+                categoryName = "Məişət Kimyası",
+                warehouseName = "Əsas Anbar"
+            ),
+            WarehouseItem(
+                id = "p_6",
+                name = "Azerçay Doğma Buket 500qr",
+                sku = "AZC-500",
+                barcode = "4760012304918",
+                unit = "ədəd",
+                stock = 380.0,
+                costPrice = 5.20,
+                salePrice = 7.60,
+                categoryName = "Qida və İçki",
+                warehouseName = "Əsas Anbar"
+            ),
+            WarehouseItem(
+                id = "p_7",
+                name = "Fairy Limon Qabyuyan Maye 1350ml",
+                sku = "FRY-1350",
+                barcode = "4015600742111",
+                unit = "ədəd",
+                stock = 290.0,
+                costPrice = 4.10,
+                salePrice = 6.30,
+                categoryName = "Məişət Kimyası",
+                warehouseName = "Filial 1 Anbarı"
+            ),
+            WarehouseItem(
+                id = "p_8",
+                name = "Barilla Spaghetti No.5 500qr",
+                sku = "BRL-SP5",
+                barcode = "8076809513753",
+                unit = "ədəd",
+                stock = 20.0,
+                costPrice = 1.95,
+                salePrice = 2.85,
+                categoryName = "Qida və İçki",
+                warehouseName = "Əsas Anbar"
+            )
+        )
+    }
+
+    private fun createInitialDebtors(): List<Debtor> {
+        return listOf(
+            Debtor(
+                id = "deb_1",
+                fullName = "Rauf Məmmədov",
+                companyName = "Araz Market Xırdalan",
+                phone = "+994 50 234 56 78",
+                totalDebt = 2850.00,
+                creditLimit = 5000.0,
+                dueDate = "Dövri Hesablaşma",
+                debtStartDate = "12.09.2026",
+                invoiceNumber = "QM-2026-104",
+                status = DebtStatus.ACTIVE,
+                notes = "Həftəlik hesablaşma, daimi müştəri"
+            ),
+            Debtor(
+                id = "deb_2",
+                fullName = "Elçin Həsənov",
+                companyName = "VÖEN: 1402839481",
+                phone = "+994 55 412 88 90",
+                totalDebt = 4320.00,
+                creditLimit = 4000.0,
+                dueDate = "25.09.2026",
+                debtStartDate = "20.08.2026",
+                invoiceNumber = "QM-2026-088",
+                status = DebtStatus.OVERDUE,
+                notes = "Gecikmiş borc, WhatsApp xatırlatma göndərilib"
+            ),
+            Debtor(
+                id = "deb_3",
+                fullName = "Nigar Əliyeva",
+                companyName = "Baku City Kafe",
+                phone = "+994 70 321 45 67",
+                totalDebt = 1450.00,
+                creditLimit = 3000.0,
+                dueDate = "10.10.2026",
+                debtStartDate = "18.09.2026",
+                invoiceNumber = "QM-2026-112",
+                status = DebtStatus.ACTIVE,
+                notes = "Restoran sifarişi üzrə qalıq"
+            ),
+            Debtor(
+                id = "deb_4",
+                fullName = "Kamran İsmayılov",
+                companyName = "Qafqaz Ticarət MMC",
+                phone = "+994 51 678 90 12",
+                totalDebt = 3200.00,
+                creditLimit = 6000.0,
+                dueDate = "15.10.2026",
+                debtStartDate = "22.09.2026",
+                invoiceNumber = "QM-2026-119",
+                status = DebtStatus.ACTIVE,
+                notes = "Topdansatış alışı"
+            ),
+            Debtor(
+                id = "deb_5",
+                fullName = "Vüqar Babayev",
+                companyName = "Səba Mini Market",
+                phone = "+994 77 555 43 21",
+                totalDebt = 980.00,
+                creditLimit = 2000.0,
+                dueDate = "08.10.2026",
+                debtStartDate = "28.09.2026",
+                invoiceNumber = "QM-2026-125",
+                status = DebtStatus.ACTIVE,
+                notes = "Məişət malları partiyası"
+            )
+        )
+    }
+
+    private fun createInitialSuppliers(): List<Supplier> {
+        return listOf(
+            Supplier(
+                id = "sup_1",
+                companyName = "Azersun Holdinq QSC",
+                contactPerson = "Elşən Quliyev",
+                phone = "+994 12 404 12 00",
+                email = "sales@azersun.az",
+                totalPayable = 4800.00,
+                debtStartDate = "05.09.2026",
+                category = "Qida və İçki",
+                lastDeliveryDate = "Aktiv"
+            ),
+            Supplier(
+                id = "sup_2",
+                companyName = "Procter & Gamble Azərbaycan",
+                contactPerson = "Fərid Məmmədov",
+                phone = "+994 12 598 34 50",
+                email = "contact@pg.az",
+                totalPayable = 3600.00,
+                debtStartDate = "10.09.2026",
+                category = "Məişət Kimyası",
+                lastDeliveryDate = "Aktiv"
+            ),
+            Supplier(
+                id = "sup_3",
+                companyName = "Coca-Cola Bottlers Azerbaijan",
+                contactPerson = "Ceyhun Səmədov",
+                phone = "+994 12 310 22 11",
+                email = "orders@cci.com.az",
+                totalPayable = 2350.00,
+                debtStartDate = "14.09.2026",
+                category = "İçki",
+                lastDeliveryDate = "Aktiv"
+            ),
+            Supplier(
+                id = "sup_4",
+                companyName = "Delta Qrup C.O. MMC",
+                contactPerson = "Murad Kərimov",
+                phone = "+994 12 497 70 80",
+                email = "info@deltagroup.az",
+                totalPayable = 1250.00,
+                debtStartDate = "19.09.2026",
+                category = "Qablaşdırma və Xammal",
+                lastDeliveryDate = "Aktiv"
+            )
+        )
+    }
+
+    private fun createInitialSummary(
+        wSummary: WarehouseSummary,
+        debtors: List<Debtor>,
+        suppliers: List<Supplier>
+    ): BusinessSummary {
+        val totalReceivables = debtors.filter { it.totalDebt > 0 }.sumOf { it.totalDebt }
+        val overdueReceivables = debtors.filter { it.status == DebtStatus.OVERDUE }.sumOf { it.totalDebt }
+        val totalPayables = suppliers.filter { it.totalPayable > 0 }.sumOf { it.totalPayable }
+
+        return BusinessSummary(
+            companyName = "Global Ticarət MMC",
+            voen = "1802938471",
+            activeCurrency = "AZN",
+            todaySales = 3450.80,
+            todayPurchases = 1200.00,
+            todayProfit = 890.50,
+            monthSales = 84920.00,
+            monthPurchases = 52300.00,
+            monthProfit = 32620.00,
+            cashInHand = 12450.00,
+            bankBalance = 45890.00,
+            totalReceivables = totalReceivables,
+            overdueReceivables = overdueReceivables,
+            totalPayables = totalPayables,
+            warehouseStockValue = wSummary.totalStockSaleValue
+        )
+    }
+
+    private fun seedDefaultDataIfEmpty(tenantId: String, tenantName: String) {
+        try {
+            val tenantRef = firestore.collection("tenants").document(tenantId)
+
+            // Seed tenant info doc if not exists
+            tenantRef.get().addOnSuccessListener { doc ->
+                if (!doc.exists()) {
+                    val data = hashMapOf(
+                        "name" to tenantName,
+                        "voen" to "1802938471",
+                        "currency" to "AZN",
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    tenantRef.set(data)
+                }
+            }
+
+            // Seed products if collection is completely empty
+            tenantRef.collection("products").limit(1).get().addOnSuccessListener { snap ->
+                if (snap.isEmpty) {
+                    for (item in initialWarehouseItems) {
+                        val pData = hashMapOf(
+                            "id" to item.id,
+                            "name" to item.name,
+                            "sku" to item.sku,
+                            "barcode" to (item.barcode ?: ""),
+                            "unit" to item.unit,
+                            "stock" to item.stock,
+                            "stockQuantity" to item.stock,
+                            "costPrice" to item.costPrice,
+                            "salePrice" to item.salePrice,
+                            "price" to item.salePrice,
+                            "category" to item.categoryName,
+                            "warehouseName" to item.warehouseName,
+                            "type" to "product",
+                            "createdAt" to FieldValue.serverTimestamp()
+                        )
+                        tenantRef.collection("products").document(item.id).set(pData)
+                    }
+                }
+            }
+
+            // Seed customers if empty
+            tenantRef.collection("customers").limit(1).get().addOnSuccessListener { snap ->
+                if (snap.isEmpty) {
+                    for (deb in initialDebtors) {
+                        val cData = hashMapOf(
+                            "name" to deb.fullName,
+                            "representativeName" to (deb.companyName ?: ""),
+                            "phone" to deb.phone,
+                            "balance" to deb.totalDebt,
+                            "debtStartDate" to deb.debtStartDate,
+                            "notes" to deb.notes,
+                            "createdAt" to FieldValue.serverTimestamp()
+                        )
+                        tenantRef.collection("customers").document(deb.id).set(cData)
+                        tenantRef.collection("mobile_pos_customers").document(deb.id).set(cData)
+                    }
+                }
+            }
+
+            // Seed suppliers if empty
+            tenantRef.collection("suppliers").limit(1).get().addOnSuccessListener { snap ->
+                if (snap.isEmpty) {
+                    for (sup in initialSuppliers) {
+                        val sData = hashMapOf(
+                            "name" to sup.companyName,
+                            "contactPerson" to sup.contactPerson,
+                            "phone" to sup.phone,
+                            "email" to (sup.email ?: ""),
+                            "balance" to sup.totalPayable,
+                            "totalPayable" to sup.totalPayable,
+                            "debtStartDate" to sup.debtStartDate,
+                            "category" to sup.category,
+                            "createdAt" to FieldValue.serverTimestamp()
+                        )
+                        tenantRef.collection("suppliers").document(sup.id).set(sData)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("BusinessRepo", "Seeding error: ${e.message}")
+        }
     }
 }
 

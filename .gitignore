@@ -17,3 +17,5 @@ local.properties
 .artifacts/
 .kotlin/
 desktop.ini
+debug.keystore
+google-services.json

@@ -159,11 +159,126 @@ fun DashboardScreen(
                     KpiStatCard(
                         title = "Kassa & Bank",
                         amount = "₼ ${String.format(Locale.US, "%,.0f", summary.cashInHand + summary.bankBalance)}",
-                        subtitle = "Nəğd: ₼ ${String.format(Locale.US, "%,.0f", summary.cashInHand)}",
+                        subtitle = "Kassa: ₼ ${String.format(Locale.US, "%,.0f", summary.cashInHand)} | Bank: ₼ ${String.format(Locale.US, "%,.0f", summary.bankBalance)}",
                         icon = Icons.Default.AccountBalance,
                         iconBg = InfoBlue,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+
+            // 2.05 DETAILED CASH & BANK ACCOUNTS WITH NAMES & BALANCES
+            if (summary.accountBalances.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(2.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalanceWallet,
+                                        contentDescription = null,
+                                        tint = InfoBlue,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = "Kassa və Bank Hesabları (D1 ERP)",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = InfoBlue.copy(alpha = 0.12f)
+                                ) {
+                                    Text(
+                                        text = "${summary.accountBalances.size} hesab",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = InfoBlue,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                summary.accountBalances.forEach { acc ->
+                                    val isCash = acc.type == "Kassa"
+                                    val badgeColor = if (isCash) EmeraldPrimary else InfoBlue
+
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = badgeColor.copy(alpha = 0.15f),
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = if (isCash) Icons.Default.Payments else Icons.Default.AccountBalance,
+                                                            contentDescription = null,
+                                                            tint = badgeColor,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+
+                                                Column {
+                                                    Text(
+                                                        text = acc.name,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = "Hesab kodu: ${acc.code} • ${acc.type}",
+                                                        fontSize = 11.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+
+                                            Text(
+                                                text = "₼ ${String.format(Locale.US, "%,.2f", acc.balance)}",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (acc.balance > 0) EmeraldPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

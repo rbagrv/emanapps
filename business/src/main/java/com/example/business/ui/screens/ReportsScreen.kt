@@ -37,6 +37,7 @@ fun ReportsScreen(
     val balanceReport by viewModel.balanceReport.collectAsState()
     val cashFlowReport by viewModel.cashFlowReport.collectAsState()
     val taxReport by viewModel.taxReport.collectAsState()
+    val summary by viewModel.summary.collectAsState()
 
     val selectedPeriod by viewModel.selectedReportPeriod.collectAsState()
     val selectedReportType by viewModel.selectedReportType.collectAsState()
@@ -220,7 +221,7 @@ fun ReportsScreen(
                 }
 
                 ReportType.BALANCE -> {
-                    item { BalanceSheetSection(balance = balanceReport) }
+                    item { BalanceSheetSection(balance = balanceReport, accountBalances = summary.accountBalances) }
                 }
 
                 ReportType.CASH_FLOW -> {
@@ -533,7 +534,10 @@ fun ProfitAndLossSection(pnl: ProfitAndLossReport, period: ReportPeriod) {
 // =================================================================
 
 @Composable
-fun BalanceSheetSection(balance: BalanceSheetReport) {
+fun BalanceSheetSection(
+    balance: BalanceSheetReport,
+    accountBalances: List<AccountBalanceItem> = emptyList()
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -547,7 +551,53 @@ fun BalanceSheetSection(balance: BalanceSheetReport) {
 
             // AKTİVLƏR
             Text("I. AKTİVLƏR", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = EmeraldPrimary)
-            FinancialSubLineItem("• Kassa və Bank Qalıqları", balance.cashAndBank)
+            FinancialSubLineItem("• Kassa və Bank Qalıqları (Cəmi)", balance.cashAndBank)
+
+            if (accountBalances.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        accountBalances.forEach { acc ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "${acc.code}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (acc.type == "Kassa") EmeraldPrimary else InfoBlue
+                                    )
+                                    Text(
+                                        text = acc.name,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "₼ ${formatAmount(acc.balance)}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             FinancialSubLineItem("• Debitor Borcları (Müştəri Alacaqları)", balance.receivables)
             FinancialSubLineItem("• Anbar Mal Qalıqları", balance.inventory)
             FinancialSubLineItem("• Əsas Vəsaitlər / Avadanlıqlar", balance.fixedAssets)

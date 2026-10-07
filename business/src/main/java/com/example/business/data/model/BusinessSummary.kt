@@ -16,6 +16,7 @@ data class BusinessSummary(
     val overdueReceivables: Double = 4320.00, // Gecikmiş borclar
     val totalPayables: Double = 14200.00, // Təchizatçılara borc (Kreditorlar)
     val warehouseStockValue: Double = 67800.00,
+    val accountBalances: List<AccountBalanceItem> = emptyList(), // Kassa və Bank hesabları üzrə ad və qalıqlar
     val weeklyTrend: List<DayStat> = listOf(
         DayStat("B.e", 2800.0, 1100.0),
         DayStat("Ç.a", 3100.0, 950.0),
@@ -66,4 +67,12 @@ data class TopProductStat(
     val soldCount: Double,
     val revenue: Double,
     val unit: String = "ədəd"
+)
+
+data class AccountBalanceItem(
+    val code: String,
+    val name: String,
+    val type: String, // "Kassa", "Bank", "ƏDV"
+    val balance: Double,
+    val currency: String = "AZN"
 )

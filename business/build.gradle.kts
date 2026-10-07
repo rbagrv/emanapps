@@ -65,18 +65,23 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    signingConfigs {
-        create("debugConfig") {
-            storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+    val rootKeystore = file("${rootDir}/debug.keystore")
+    if (rootKeystore.exists()) {
+        signingConfigs {
+            create("debugConfig") {
+                storeFile = rootKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("debugConfig")
+            if (rootKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("debugConfig")
+            }
         }
         release {
             optimization {

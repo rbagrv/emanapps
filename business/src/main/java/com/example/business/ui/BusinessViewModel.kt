@@ -236,10 +236,15 @@ class BusinessViewModel(
             }
         }
 
-        // Keep current report updated whenever summary changes
+        // Keep all financial reports updated whenever summary changes (from D1 or Firestore)
         viewModelScope.launch {
             repository.summary.collect {
-                _currentReport.value = repository.getReport(selectedReportPeriod.value)
+                val period = selectedReportPeriod.value
+                _currentReport.value = repository.getReport(period)
+                _pnlReport.value = repository.getProfitAndLoss(period)
+                _balanceReport.value = repository.getBalanceSheet()
+                _cashFlowReport.value = repository.getCashFlow(period)
+                _taxReport.value = repository.getTaxReport(period)
             }
         }
     }

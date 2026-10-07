@@ -516,6 +516,43 @@ fun MoreScreen(
                 }
             }
 
+            // SECTION: PROQRAM YENİLƏNMƏSİ
+            item {
+                Text("SİSTEM YENİLƏNMƏSİ", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate500)
+                Spacer(modifier = Modifier.height(6.dp))
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                        val res = com.example.myapplication.util.PosAppUpdateManager.checkForUpdates(forceSilent = false)
+                                        if (res is com.example.myapplication.util.PosUpdateStatus.UpToDate) {
+                                            android.widget.Toast.makeText(context, "POS artıq ən son versiyadadır (v${com.example.myapplication.BuildConfig.VERSION_NAME})", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = EmanagerBlue)
+                                Column {
+                                    Text("Yenilənmələri Yoxla", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("v${com.example.myapplication.BuildConfig.VERSION_NAME} • GitHub-dan yenilə", fontSize = 11.sp, color = Slate500)
+                                }
+                            }
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Slate500, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+
             // SECTION 5: ÇIXIŞ
             item {
                 Card(

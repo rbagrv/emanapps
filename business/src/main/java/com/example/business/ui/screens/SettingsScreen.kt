@@ -1,6 +1,7 @@
 package com.example.business.ui.screens
 
 import android.widget.Toast
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +38,7 @@ fun SettingsScreen(
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var showPinChangeDialog by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
@@ -345,6 +347,31 @@ fun SettingsScreen(
                     Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = LossRed, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Hesabdan Çıxış", color = LossRed, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(2.dp)
+                ) {
+                    Column {
+                        SettingsRow(
+                            icon = Icons.Default.SystemUpdate,
+                            title = "Yenilənmələri Yoxla",
+                            subtitle = "GitHub-dan ən son versiyanı yoxla və yenilə",
+                            onClick = {
+                                scope.launch {
+                                    val res = com.example.business.util.AppUpdateManager.checkForUpdates(forceSilent = false)
+                                    if (res is com.example.business.util.UpdateStatus.UpToDate) {
+                                        Toast.makeText(context, "Tətbiq ən son versiyadadır (v${com.example.business.BuildConfig.VERSION_NAME})", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        )
+                    }
                 }
             }
 

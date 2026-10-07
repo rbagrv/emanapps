@@ -8,6 +8,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -56,6 +58,11 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+        // Check for updates from GitHub in background
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.example.business.util.AppUpdateManager.checkForUpdates(forceSilent = true)
+        }
+
         setContent {
             val themeMode by viewModel.themeMode.collectAsState()
             val darkTheme = when (themeMode) {
@@ -66,6 +73,7 @@ class MainActivity : FragmentActivity() {
 
             BusinessTheme(darkTheme = darkTheme) {
                 BusinessAppRoot(viewModel = viewModel)
+                com.example.business.ui.components.AppUpdateDialog()
             }
         }
     }

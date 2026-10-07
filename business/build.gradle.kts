@@ -151,15 +151,35 @@ tasks.matching { it.name == "assembleDebug" }.configureEach {
             val targetDir = rootProject.file("APK_FAYLLARI")
             targetDir.mkdirs()
 
-            // Automatically remove previous APK files so only the latest version remains
-            targetDir.listFiles()?.filter { it.isFile && it.name.endsWith(".apk") }?.forEach { oldApk ->
+            // Automatically remove previous Sahibkar APK files so only the latest version remains
+            targetDir.listFiles()?.filter { it.isFile && it.name.startsWith("e-Manager_Sahibkar_") && it.name.endsWith(".apk") }?.forEach { oldApk ->
                 val deleted = oldApk.delete()
-                println(">>> [Auto-Clean] Deleted previous APK: ${oldApk.name} (success: $deleted)")
+                println(">>> [Auto-Clean] Deleted previous Sahibkar APK: ${oldApk.name} (success: $deleted)")
             }
 
             val targetApk = File(targetDir, "e-Manager_Sahibkar_v${appVersionName}.apk")
             apkSource.copyTo(targetApk, overwrite = true)
             println(">>> [Auto-Copy] Successfully copied latest APK to: ${targetApk.name}")
+
+            val updatesJsonFile = rootProject.file("app_updates.json")
+            if (updatesJsonFile.exists()) {
+                val content = updatesJsonFile.readText()
+                val updated = content.replace(
+                    Regex("\"business\":\\s*\\{[^\\}]*\\}", RegexOption.DOT_MATCHES_ALL),
+                    """
+                    "business": {
+                        "versionCode": $appVersionCode,
+                        "versionName": "$appVersionName",
+                        "apkName": "${targetApk.name}",
+                        "downloadUrl": "https://github.com/rbagrv/emanapps/raw/main/APK_FAYLLARI/${targetApk.name}",
+                        "releaseNotes": "e-manager.az ERP canlı qoşulma, Balans və MZH hesabatları, bank və kassa hesabları qalıqları.",
+                        "forceUpdate": false
+                      }
+                    """.trimIndent().trim()
+                )
+                updatesJsonFile.writeText(updated)
+                println(">>> [Auto-Update] Updated app_updates.json for business v$appVersionName")
+            }
         }
     }
 }

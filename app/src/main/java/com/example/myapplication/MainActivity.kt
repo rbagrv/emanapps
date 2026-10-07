@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -45,6 +46,11 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Check for POS updates from GitHub in background
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.example.myapplication.util.PosAppUpdateManager.checkForUpdates(forceSilent = true)
+        }
+
         setContent {
             val themeMode by viewModel.themeMode.collectAsState()
             val darkTheme = when (themeMode) {
@@ -55,6 +61,7 @@ class MainActivity : FragmentActivity() {
 
             MyApplicationTheme(darkTheme = darkTheme) {
                 POSApp(viewModel = viewModel)
+                com.example.myapplication.ui.components.PosAppUpdateDialog()
             }
         }
     }

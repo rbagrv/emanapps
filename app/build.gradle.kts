@@ -1,9 +1,56 @@
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
     id("com.google.devtools.ksp")
 }
+
+val versionPropsFile = file("version.properties")
+
+fun getOrBumpVersion(): Pair<Int, String> {
+    val props = Properties()
+    if (!versionPropsFile.exists()) {
+        props.setProperty("versionCode", "24")
+        props.setProperty("versionName", "1.24")
+        versionPropsFile.createNewFile()
+        FileOutputStream(versionPropsFile).use { props.store(it, "Version properties") }
+    } else {
+        FileInputStream(versionPropsFile).use { props.load(it) }
+    }
+
+    var code = props.getProperty("versionCode", "24").toIntOrNull() ?: 24
+    var name = props.getProperty("versionName", "1.24")
+
+    val taskNames = gradle.startParameter.taskNames
+    val isBuilding = taskNames.any { task ->
+        val t = task.lowercase()
+        t.contains("assemble") || t.contains("bundle") || t.contains("package") || t.contains("install") || t.contains("build")
+    }
+
+    if (isBuilding) {
+        code += 1
+        val parts = name.split(".")
+        name = if (parts.size >= 2) {
+            val major = parts[0]
+            val minor = (parts[1].toIntOrNull() ?: 0) + 1
+            "$major.$minor"
+        } else {
+            "1.$code"
+        }
+        props.setProperty("versionCode", code.toString())
+        props.setProperty("versionName", name)
+        FileOutputStream(versionPropsFile).use { props.store(it, "Auto-incremented during build") }
+        println(">>> [Auto-Version] Bumped POS version -> Code: $code, Name: v$name")
+    }
+
+    return Pair(code, name)
+}
+
+val (appVersionCode, appVersionName) = getOrBumpVersion()
 
 android {
     namespace = "com.example.myapplication"
@@ -13,24 +60,29 @@ android {
         applicationId = "com.emanager.app"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    signingConfigs {
-        create("debugConfig") {
-            storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+    val rootKeystore = file("${rootDir}/debug.keystore")
+    if (rootKeystore.exists()) {
+        signingConfigs {
+            create("debugConfig") {
+                storeFile = rootKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("debugConfig")
+            if (rootKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("debugConfig")
+            }
         }
         release {
             optimization {
@@ -44,6 +96,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -106,4 +159,44 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    doLast {
+        val apkSource = file("build/outputs/apk/debug/app-debug.apk")
+        if (apkSource.exists()) {
+            val targetDir = rootProject.file("APK_FAYLLARI")
+            targetDir.mkdirs()
+
+            // Automatically remove previous POS APK files so only the latest version remains
+            targetDir.listFiles()?.filter { it.isFile && it.name.startsWith("e-Manager_POS_") && it.name.endsWith(".apk") }?.forEach { oldApk ->
+                val deleted = oldApk.delete()
+                println(">>> [Auto-Clean] Deleted previous POS APK: ${oldApk.name} (success: $deleted)")
+            }
+
+            val targetApk = File(targetDir, "e-Manager_POS_v${appVersionName}.apk")
+            apkSource.copyTo(targetApk, overwrite = true)
+            println(">>> [Auto-Copy] Successfully copied latest POS APK to: ${targetApk.name}")
+
+            val updatesJsonFile = rootProject.file("app_updates.json")
+            if (updatesJsonFile.exists()) {
+                val content = updatesJsonFile.readText()
+                val updated = content.replace(
+                    Regex("\"pos\":\\s*\\{[^\\}]*\\}", RegexOption.DOT_MATCHES_ALL),
+                    """
+                    "pos": {
+                        "versionCode": $appVersionCode,
+                        "versionName": "$appVersionName",
+                        "apkName": "${targetApk.name}",
+                        "downloadUrl": "https://github.com/rbagrv/emanapps/raw/main/APK_FAYLLARI/${targetApk.name}",
+                        "releaseNotes": "POS Kassa üçün yeni versiya, təkmilləşdirilmiş çap və avtomatik yenilənmə sistemi.",
+                        "forceUpdate": false
+                      }
+                    """.trimIndent().trim()
+                )
+                updatesJsonFile.writeText(updated)
+                println(">>> [Auto-Update] Updated app_updates.json for POS v$appVersionName")
+            }
+        }
+    }
 }

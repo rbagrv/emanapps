@@ -150,9 +150,16 @@ tasks.matching { it.name == "assembleDebug" }.configureEach {
         if (apkSource.exists()) {
             val targetDir = rootProject.file("APK_FAYLLARI")
             targetDir.mkdirs()
+
+            // Automatically remove previous APK files so only the latest version remains
+            targetDir.listFiles()?.filter { it.isFile && it.name.endsWith(".apk") }?.forEach { oldApk ->
+                val deleted = oldApk.delete()
+                println(">>> [Auto-Clean] Deleted previous APK: ${oldApk.name} (success: $deleted)")
+            }
+
             val targetApk = File(targetDir, "e-Manager_Sahibkar_v${appVersionName}.apk")
             apkSource.copyTo(targetApk, overwrite = true)
-            println(">>> [Auto-Copy] Successfully copied APK to: ${targetApk.name}")
+            println(">>> [Auto-Copy] Successfully copied latest APK to: ${targetApk.name}")
         }
     }
 }

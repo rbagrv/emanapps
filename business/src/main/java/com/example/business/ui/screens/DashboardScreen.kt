@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -44,6 +45,23 @@ fun DashboardScreen(
     val warehouseSummary by viewModel.warehouseSummary.collectAsState()
     val context = LocalContext.current
 
+    // Real dynamic business health calculations
+    val realMargin = if (summary.monthSales > 0) (summary.monthProfit / summary.monthSales * 100.0).coerceIn(0.0, 100.0) else 0.0
+    val totalCashAndBank = summary.cashInHand + summary.bankBalance
+    val liquidityRatio = if (summary.totalPayables > 0) (totalCashAndBank / summary.totalPayables) else if (totalCashAndBank > 0) 3.0 else 1.0
+    val overdueRatio = if (summary.totalReceivables > 0) (summary.overdueReceivables / summary.totalReceivables).coerceIn(0.0, 1.0) else 0.0
+    val collectionRate = ((1.0 - overdueRatio) * 100).toInt()
+    val healthScore = ((if (liquidityRatio >= 1.0) 40 else (liquidityRatio * 40).toInt()) +
+                       (realMargin * 0.35).toInt().coerceIn(0, 35) +
+                       (collectionRate * 0.25).toInt().coerceIn(0, 25)).coerceIn(10, 100)
+    val healthProgress = healthScore / 100f
+    val healthGrade = when {
+        healthScore >= 85 -> "Əla"
+        healthScore >= 70 -> "Yaxşı"
+        healthScore >= 50 -> "Orta"
+        else -> "Diqqət tələb edir"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -77,6 +95,16 @@ fun DashboardScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        viewModel.refreshData()
+                        Toast.makeText(context, "Məlumatlar ERP-dən yeniləndi", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Yenilə",
+                            tint = EmeraldPrimary
+                        )
+                    }
                     IconButton(onClick = { viewModel.openTenantSelector() }) {
                         Icon(
                             imageVector = Icons.Default.Storefront,
@@ -150,7 +178,7 @@ fun DashboardScreen(
                     KpiStatCard(
                         title = "Aylıq Mənfəət",
                         amount = "₼ ${String.format(Locale.US, "%,.2f", summary.monthProfit)}",
-                        subtitle = "Xalis rentabellik: ~38%",
+                        subtitle = "Xalis marja: ${String.format(Locale.US, "%.1f", realMargin)}%",
                         icon = Icons.Default.MonetizationOn,
                         iconBg = ProfitGreen,
                         modifier = Modifier.weight(1f)
@@ -302,13 +330,13 @@ fun DashboardScreen(
                             }
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = EmeraldPrimary.copy(alpha = 0.15f)
+                                color = (if (healthScore >= 70) EmeraldPrimary else WarningOrange).copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = "94 / 100 • Əla",
+                                    text = "$healthScore / 100 • $healthGrade",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = EmeraldPrimary,
+                                    color = if (healthScore >= 70) EmeraldPrimary else WarningOrange,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -316,9 +344,9 @@ fun DashboardScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         LinearProgressIndicator(
-                            progress = { 0.94f },
+                            progress = { healthProgress },
                             modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                            color = EmeraldPrimary,
+                            color = if (healthScore >= 70) EmeraldPrimary else WarningOrange,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
 
@@ -327,9 +355,9 @@ fun DashboardScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Likvidlik: Yüksək (2.1x)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Rentabellik: 38.4%", fontSize = 11.sp, color = EmeraldPrimary, fontWeight = FontWeight.Medium)
-                            Text("Borc ödəmə: 92%", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Likvidlik: ${String.format(Locale.US, "%.1f", liquidityRatio)}x", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Rentabellik: ${String.format(Locale.US, "%.1f", realMargin)}%", fontSize = 11.sp, color = EmeraldPrimary, fontWeight = FontWeight.Medium)
+                            Text("Yığım nisbəti: $collectionRate%", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -715,7 +743,7 @@ fun DashboardScreen(
                         }
 
                         Icon(
-                            imageVector = Icons.Default.OpenInNew,
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                             contentDescription = "Aç",
                             tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )

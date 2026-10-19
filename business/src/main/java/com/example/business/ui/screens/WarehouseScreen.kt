@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,8 +43,16 @@ fun WarehouseScreen(
     val hideZeroStock by viewModel.hideZeroStock.collectAsState()
     val onlyLowStock by viewModel.onlyLowStock.collectAsState()
     val context = LocalContext.current
-
     var selectedItemForStockEdit by remember { mutableStateOf<WarehouseItem?>(null) }
+    var sortOrder by remember { mutableStateOf("name_asc") }
+
+    val sortedItems = remember(items, sortOrder) {
+        when (sortOrder) {
+            "stock_asc" -> items.sortedBy { it.stock }
+            "val_desc" -> items.sortedByDescending { it.totalStockValue }
+            else -> items.sortedBy { it.name.lowercase(Locale.ROOT) }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -266,8 +275,35 @@ fun WarehouseScreen(
                 }
             }
 
+            // 3.2 Sort Selector
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = sortOrder == "name_asc",
+                        onClick = { sortOrder = "name_asc" },
+                        label = { Text("Ada görə A-Z", fontSize = 11.sp) }
+                    )
+                    FilterChip(
+                        selected = sortOrder == "stock_asc",
+                        onClick = { sortOrder = "stock_asc" },
+                        label = { Text("Qalıq ↑", fontSize = 11.sp) },
+                        leadingIcon = {
+                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(13.dp))
+                        }
+                    )
+                    FilterChip(
+                        selected = sortOrder == "val_desc",
+                        onClick = { sortOrder = "val_desc" },
+                        label = { Text("Dəyər ↓", fontSize = 11.sp) }
+                    )
+                }
+            }
+
             // 4. Products List
-            if (items.isEmpty()) {
+            if (sortedItems.isEmpty()) {
                 item {
                     Card(
                         modifier = Modifier
@@ -310,7 +346,7 @@ fun WarehouseScreen(
                     }
                 }
             } else {
-                items(items, key = { it.id }) { item ->
+                items(sortedItems, key = { it.id }) { item ->
                     WarehouseItemCard(
                         item = item,
                         onEditStock = { selectedItemForStockEdit = item }
@@ -444,6 +480,22 @@ fun WarehouseItemCard(
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.outline
                     )
+                }
+                if (item.salePrice > item.costPrice && item.costPrice > 0.0) {
+                    val marginPct = (((item.salePrice - item.costPrice) / item.salePrice) * 100).toInt()
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = ProfitGreen.copy(alpha = 0.12f),
+                        modifier = Modifier.padding(top = 2.dp)
+                    ) {
+                        Text(
+                            text = "+$marginPct% mənfəət marjası",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ProfitGreen,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
                 }
             }
 

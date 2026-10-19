@@ -602,6 +602,16 @@ class BusinessViewModel(
         _appStage.value = BusinessAppStage.TENANT_SELECT
     }
 
+    fun refreshData() {
+        val tId = activeTenantId
+        val tName = companyName.value
+        repository.connectToTenant(tId, tName)
+        val uid = auth.currentUser?.uid
+        if (uid != null) {
+            loadUserTenants(uid)
+        }
+    }
+
     fun updateOwnerProfile(name: String, phone: String, company: String, onResult: (Boolean, String?) -> Unit) {
         repository.updateOwnerProfile(name, phone, company) { success, err ->
             if (success) {

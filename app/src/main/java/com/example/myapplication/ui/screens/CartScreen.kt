@@ -43,6 +43,7 @@ fun CartScreen(
 
     var showHoldPromptDialog by remember { mutableStateOf(false) }
     var holdNoteInput by remember { mutableStateOf("") }
+    var selectedPaymentType by remember { mutableStateOf("Nağd") }
 
     if (showHoldPromptDialog) {
         AlertDialog(
@@ -153,7 +154,7 @@ fun CartScreen(
                 }
             }
 
-            Divider(modifier = Modifier.padding(vertical = 10.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
 
             // Discount Chips selector
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -218,7 +219,7 @@ fun CartScreen(
                         Text(String.format("%.2f ₼", vatVal), fontSize = 11.sp, color = Slate500)
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -236,7 +237,33 @@ fun CartScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Payment Method Selector
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("Nağd", "Kart", "Nisyə").forEach { type ->
+                    val isSel = selectedPaymentType == type
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSel) EmanagerBlue else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.weight(1f).clickable { selectedPaymentType = type }
+                    ) {
+                        Box(modifier = Modifier.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = type,
+                                color = if (isSel) Color.White else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -251,14 +278,14 @@ fun CartScreen(
                 }
                 Button(
                     onClick = {
-                        viewModel.submitSale(paymentType = "Nağd", cashierName = cashierName)
+                        viewModel.submitSale(paymentType = selectedPaymentType, cashierName = cashierName)
                     },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = EmanagerGreen),
                     modifier = Modifier.weight(1.5f),
                     enabled = !isLoading
                 ) {
-                    Text(if (isLoading) "Gözləyin..." else "Ödənişi Tamamla")
+                    Text(if (isLoading) "Gözləyin..." else "Ödənişi Tamamla ($selectedPaymentType)")
                 }
             }
         }

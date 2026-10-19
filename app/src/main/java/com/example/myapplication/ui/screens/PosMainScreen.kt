@@ -589,6 +589,25 @@ fun PosMainScreen(
                                 )
                             }
 
+                            // Sahibkar App Cross-Launch Button
+                            IconButton(
+                                onClick = {
+                                    val launchIntent = context.packageManager.getLaunchIntentForPackage("com.emanager.business")
+                                    if (launchIntent != null) {
+                                        context.startActivity(launchIntent)
+                                    } else {
+                                        Toast.makeText(context, "Sahibkar tətbiqi tapılmadı", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.BusinessCenter,
+                                    contentDescription = "Sahibkar Panelinə Keç",
+                                    tint = Color.White
+                                )
+                            }
+
                             // Online status badge
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
@@ -1175,7 +1194,7 @@ fun AdvancedCheckoutDialog(
                                 Text("-%.2f ₼".format(discountAmount), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = EmanagerOrange)
                             }
                         }
-                        Divider(modifier = Modifier.padding(vertical = 4.dp), color = EmanagerBlue.copy(alpha = 0.2f))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = EmanagerBlue.copy(alpha = 0.2f))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1433,7 +1452,7 @@ fun DigitalReceiptDialog(
                     Text("Qəbz №: ${receipt.invoiceNumber}", fontSize = 11.sp, color = Slate500, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     Text(dateStr, fontSize = 10.sp, color = Slate500, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
 
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(receipt.items) { item ->
@@ -1444,7 +1463,7 @@ fun DigitalReceiptDialog(
                         }
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 4.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                     if (receipt.discountAmount > 0.0) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

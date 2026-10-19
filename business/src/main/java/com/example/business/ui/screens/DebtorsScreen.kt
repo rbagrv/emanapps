@@ -10,6 +10,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -45,6 +48,16 @@ fun DebtorsScreen(
     var selectedDebtorForPayment by remember { mutableStateOf<Debtor?>(null) }
     var selectedDebtorForDetails by remember { mutableStateOf<Debtor?>(null) }
     var selectedDebtorForDebtOrigin by remember { mutableStateOf<Debtor?>(null) }
+    var sortOrder by remember { mutableStateOf("debt_desc") }
+
+    val sortedDebtors = remember(debtors, sortOrder) {
+        when (sortOrder) {
+            "debt_desc" -> debtors.sortedByDescending { it.totalDebt }
+            "name_asc" -> debtors.sortedBy { it.fullName.lowercase(Locale.ROOT) }
+            "overdue_first" -> debtors.sortedWith(compareByDescending<Debtor> { it.status == DebtStatus.OVERDUE }.thenByDescending { it.totalDebt })
+            else -> debtors
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -111,6 +124,11 @@ fun DebtorsScreen(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        Text(
+                            text = "${debtors.size} debitor • ${debtors.count { it.status == DebtStatus.OVERDUE }} gecikmiş",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     Column(horizontalAlignment = Alignment.End) {
@@ -149,34 +167,46 @@ fun DebtorsScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // 3. Status Filters
+            // 3. Status & Sorting Filters
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 FilterChip(
                     selected = filterStatus == null,
                     onClick = { viewModel.debtorFilterStatus.value = null },
-                    label = { Text("Hamısı") }
+                    label = { Text("Hamısı", fontSize = 11.sp) }
                 )
                 FilterChip(
                     selected = filterStatus == DebtStatus.ACTIVE,
                     onClick = { viewModel.debtorFilterStatus.value = DebtStatus.ACTIVE },
-                    label = { Text("Aktiv") }
+                    label = { Text("Aktiv", fontSize = 11.sp) }
                 )
                 FilterChip(
                     selected = filterStatus == DebtStatus.OVERDUE,
                     onClick = { viewModel.debtorFilterStatus.value = DebtStatus.OVERDUE },
-                    label = { Text("Gecikmiş") }
+                    label = { Text("Gecikmiş", fontSize = 11.sp) }
+                )
+                FilterChip(
+                    selected = sortOrder == "debt_desc",
+                    onClick = {
+                        sortOrder = if (sortOrder == "debt_desc") "name_asc" else "debt_desc"
+                    },
+                    label = {
+                        Text(if (sortOrder == "debt_desc") "Borca görə ↓" else "Ada görə A-Z", fontSize = 11.sp)
+                    },
+                    leadingIcon = {
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(14.dp))
+                    }
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // 4. Debtor List
-            if (debtors.isEmpty()) {
+            if (sortedDebtors.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -206,7 +236,7 @@ fun DebtorsScreen(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(debtors, key = { it.id }) { debtor ->
+                    items(sortedDebtors, key = { it.id }) { debtor ->
                         DebtorCard(
                             debtor = debtor,
                             onCardClick = { selectedDebtorForDetails = debtor },
@@ -354,7 +384,7 @@ fun DebtorsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("WhatsApp ilə Xatırlat")
                 }
@@ -527,7 +557,7 @@ fun DebtorCard(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Chat,
+                                imageVector = Icons.AutoMirrored.Filled.Chat,
                                 contentDescription = "WhatsApp Borc Xatırlatması",
                                 tint = Color(0xFF25D366),
                                 modifier = Modifier.size(14.dp)

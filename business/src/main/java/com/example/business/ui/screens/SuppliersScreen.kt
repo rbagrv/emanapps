@@ -10,6 +10,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +45,15 @@ fun SuppliersScreen(
     var selectedSupplierForPayment by remember { mutableStateOf<Supplier?>(null) }
     var selectedSupplierForDetails by remember { mutableStateOf<Supplier?>(null) }
     var selectedSupplierForDebtOrigin by remember { mutableStateOf<Supplier?>(null) }
+    var sortOrder by remember { mutableStateOf("debt_desc") }
+
+    val sortedSuppliers = remember(suppliers, sortOrder) {
+        when (sortOrder) {
+            "debt_desc" -> suppliers.sortedByDescending { it.totalPayable }
+            "name_asc" -> suppliers.sortedBy { it.companyName.lowercase(Locale.ROOT) }
+            else -> suppliers
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -144,10 +156,32 @@ fun SuppliersScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 2.1 Sorting Filters
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(
+                    selected = sortOrder == "debt_desc",
+                    onClick = { sortOrder = "debt_desc" },
+                    label = { Text("Borca görə ↓", fontSize = 11.sp) },
+                    leadingIcon = {
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(14.dp))
+                    }
+                )
+                FilterChip(
+                    selected = sortOrder == "name_asc",
+                    onClick = { sortOrder = "name_asc" },
+                    label = { Text("Ada görə A-Z", fontSize = 11.sp) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // 3. Supplier List
-            if (suppliers.isEmpty()) {
+            if (sortedSuppliers.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -177,7 +211,7 @@ fun SuppliersScreen(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(suppliers, key = { it.id }) { supplier ->
+                    items(sortedSuppliers, key = { it.id }) { supplier ->
                         SupplierCard(
                             supplier = supplier,
                             onCardClick = { selectedSupplierForDetails = supplier },
@@ -317,7 +351,7 @@ fun SuppliersScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("WhatsApp ilə Yaz")
                 }
@@ -368,6 +402,7 @@ fun SupplierCard(
     onPayClick: () -> Unit,
     onCallClick: () -> Unit
 ) {
+    val context = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -440,22 +475,61 @@ fun SupplierCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.clickable { onCallClick() },
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Phone,
-                        contentDescription = "Zəng et",
-                        tint = EmeraldPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = supplier.phone,
-                        fontSize = 12.sp,
-                        color = EmeraldPrimary,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        modifier = Modifier.clickable { onCallClick() },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = "Zəng et",
+                            tint = EmeraldPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = supplier.phone,
+                            fontSize = 12.sp,
+                            color = EmeraldPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Surface(
+                        onClick = {
+                            val cleanPhone = supplier.phone.replace("+", "").replace(" ", "").replace("-", "")
+                            val msg = "Salam, ${supplier.companyName} təmsilçisi. Cari qalıq borcumuz: ₼${String.format(Locale.US, "%,.2f", supplier.totalPayable)}. Hesablaşma üzrə əlaqə saxlayırıq."
+                            val url = "https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(msg)}"
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                val generalIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, msg)
+                                }
+                                context.startActivity(Intent.createChooser(generalIntent, "WhatsApp ilə Paylaş"))
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF25D366).copy(alpha = 0.15f)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Chat,
+                                contentDescription = "WhatsApp",
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text("WhatsApp", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E8E44))
+                        }
+                    }
                 }
 
                 Button(

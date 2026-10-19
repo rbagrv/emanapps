@@ -12,6 +12,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -414,7 +416,7 @@ fun MoreScreen(
                         HorizontalDivider(color = Slate200.copy(alpha = 0.6f))
 
                         SettingsRow(
-                            icon = Icons.Default.ReceiptLong,
+                            icon = Icons.AutoMirrored.Filled.ReceiptLong,
                             title = "Test Çeki Çap Et",
                             subtitle = "Printer əlaqəsini yoxlayın",
                             onClick = {
@@ -566,7 +568,7 @@ fun MoreScreen(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.ExitToApp, contentDescription = null, tint = EmanagerRose)
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = EmanagerRose)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Sistemdən Çıxış", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = EmanagerRose)
                     }

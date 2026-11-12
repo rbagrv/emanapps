@@ -324,25 +324,20 @@ fun MonthlyTargetTrackerCard(
 
 @Composable
 fun WeeklyTrendChartCard(summary: BusinessSummary) {
-    val dayLabels = remember { listOf("B.e", "Ç.a", "Çər", "C.a", "Cüm", "Şən", "Bazar") }
-    val baseDaily = remember(summary.todaySales, summary.monthSales) {
-        val avg = if (summary.monthSales > 0) (summary.monthSales / 30.0) else summary.todaySales.coerceAtLeast(450.0)
-        val today = summary.todaySales.coerceAtLeast(avg * 0.8)
-        listOf(
-            avg * 0.78,
-            avg * 0.92,
-            avg * 0.85,
-            avg * 1.12,
-            avg * 1.05,
-            avg * 1.24,
-            today
-        )
+    val trend = summary.weeklyTrend
+    val dayLabels = remember(trend) {
+        if (trend.isNotEmpty()) trend.map { it.dayName }
+        else listOf("B.e", "Ç.a", "Çər", "C.a", "Cüm", "Şən", "Baz")
+    }
+    val baseDaily = remember(trend) {
+        if (trend.isNotEmpty()) trend.map { it.salesAmount }
+        else List(7) { 0.0 }
     }
 
-    var selectedIndex by remember { mutableIntStateOf(6) }
+    var selectedIndex by remember(baseDaily.size) { mutableIntStateOf((baseDaily.size - 1).coerceAtLeast(0)) }
     val animProgress = remember { Animatable(0f) }
 
-    LaunchedEffect(summary.todaySales) {
+    LaunchedEffect(trend) {
         animProgress.snapTo(0f)
         animProgress.animateTo(1f, animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing))
     }

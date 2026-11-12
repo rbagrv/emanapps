@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.business.data.model.*
 import com.example.business.data.repository.BusinessRepository
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -431,8 +432,88 @@ class BusinessViewModel(
             }
     }
 
+    private fun isTenantDocActive(tDoc: DocumentSnapshot): Boolean {
+        if (!tDoc.exists()) return false
+        if (tDoc.getBoolean("isDeleted") == true || tDoc.getBoolean("deleted") == true) return false
+        if (tDoc.getBoolean("isActive") == false) return false
+        val status = tDoc.getString("status")?.lowercase(Locale.ROOT) ?: ""
+        if (status == "deleted" || status == "archived" || status == "inactive") return false
+        val name = tDoc.getString("name")
+        return !name.isNullOrBlank()
+    }
+
     fun loadUserTenants(uid: String) {
-        // 1. First fetch active tenants list directly from Cloudflare D1 Backend (api/extension/tenants)
+        // 1. Fetch user's authorized & active tenants from Firestore (excluding deleted/non-existent docs)
+        firestore.collection("users").document(uid).get()
+            .addOnSuccessListener { doc ->
+                if (!doc.exists()) return@addOnSuccessListener
+
+                val displayName = doc.getString("displayName")
+                if (!displayName.isNullOrBlank()) {
+                    ownerName.value = displayName
+                    prefs.edit().putString("owner_name", displayName).apply()
+                }
+
+                @Suppress("UNCHECKED_CAST")
+                val authorizedTenants = doc.get("authorizedTenants") as? List<String> ?: emptyList()
+
+                if (authorizedTenants.isNotEmpty()) {
+                    val tenantsList = mutableListOf<Tenant>()
+                    var fetchedCount = 0
+                    for (tId in authorizedTenants) {
+                        firestore.collection("tenants").document(tId).get()
+                            .addOnSuccessListener { tDoc ->
+                                if (isTenantDocActive(tDoc)) {
+                                    tenantsList.add(
+                                        Tenant(
+                                            id = tId,
+                                            name = tDoc.getString("name") ?: tId,
+                                            voen = tDoc.getString("voen")
+                                        )
+                                    )
+                                }
+                                fetchedCount++
+                                if (fetchedCount == authorizedTenants.size) {
+                                    val cleanList = tenantsList.distinctBy { it.id }
+                                    _availableTenants.value = cleanList
+                                    if (cleanList.isNotEmpty() && cleanList.none { it.id == activeTenantId }) {
+                                        selectTenant(cleanList.first())
+                                    }
+                                }
+                            }
+                            .addOnFailureListener {
+                                fetchedCount++
+                                if (fetchedCount == authorizedTenants.size) {
+                                    val cleanList = tenantsList.distinctBy { it.id }
+                                    _availableTenants.value = cleanList
+                                    if (cleanList.isNotEmpty() && cleanList.none { it.id == activeTenantId }) {
+                                        selectTenant(cleanList.first())
+                                    }
+                                }
+                            }
+                    }
+                } else {
+                    // Discover active non-deleted tenants from Firestore
+                    firestore.collection("tenants").limit(20).get()
+                        .addOnSuccessListener { snapshot ->
+                            val list = snapshot.documents
+                                .filter { isTenantDocActive(it) }
+                                .map { d ->
+                                    Tenant(
+                                        id = d.id,
+                                        name = d.getString("name") ?: d.id,
+                                        voen = d.getString("voen")
+                                    )
+                                }
+                            _availableTenants.value = list
+                            if (list.isNotEmpty() && list.none { it.id == activeTenantId }) {
+                                selectTenant(list.first())
+                            }
+                        }
+                }
+            }
+
+        // 2. Also check D1 REST API if session is active (only keep non-deleted tenants)
         viewModelScope.launch {
             try {
                 val d1Response = com.example.business.data.api.D1ApiClient.erpRestService.getTenants()
@@ -447,63 +528,15 @@ class BusinessViewModel(
 
                     if (d1List.isNotEmpty()) {
                         _availableTenants.value = d1List
+                        if (d1List.none { it.id == activeTenantId }) {
+                            selectTenant(d1List.first())
+                        }
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.w("BusinessVM", "D1 tenants load fallback to Firestore: ${e.message}")
+                android.util.Log.w("BusinessVM", "D1 tenants check skipped: ${e.message}")
             }
         }
-
-        // 2. Also fetch user's authorized tenants from Firestore
-        firestore.collection("users").document(uid).get()
-            .addOnSuccessListener { doc ->
-                if (doc.exists()) {
-                    val displayName = doc.getString("displayName")
-                    if (!displayName.isNullOrBlank()) {
-                        ownerName.value = displayName
-                        prefs.edit().putString("owner_name", displayName).apply()
-                    }
-
-                    @Suppress("UNCHECKED_CAST")
-                    val authorizedTenants = doc.get("authorizedTenants") as? List<String> ?: emptyList()
-                    val tenantsList = mutableListOf<Tenant>()
-
-                    if (authorizedTenants.isNotEmpty()) {
-                        var fetchedCount = 0
-                        for (tId in authorizedTenants) {
-                            firestore.collection("tenants").document(tId).get()
-                                .addOnSuccessListener { tDoc ->
-                                    val name = tDoc.getString("name") ?: tId
-                                    val voen = tDoc.getString("voen")
-                                    tenantsList.add(Tenant(id = tId, name = name, voen = voen))
-                                    fetchedCount++
-                                    if (fetchedCount == authorizedTenants.size) {
-                                        val combined = (_availableTenants.value + tenantsList).distinctBy { it.id }
-                                        _availableTenants.value = combined
-                                    }
-                                }
-                                .addOnFailureListener {
-                                    fetchedCount++
-                                    if (fetchedCount == authorizedTenants.size) {
-                                        val combined = (_availableTenants.value + tenantsList).distinctBy { it.id }
-                                        _availableTenants.value = combined
-                                    }
-                                }
-                        }
-                    } else if (_availableTenants.value.isEmpty()) {
-                        // Discover all active tenants the user is linked to or system default
-                        firestore.collection("tenants").limit(10).get()
-                            .addOnSuccessListener { snapshot ->
-                                val list = snapshot.documents.map { d ->
-                                    Tenant(id = d.id, name = d.getString("name") ?: d.id, voen = d.getString("voen"))
-                                }
-                                if (list.isNotEmpty()) {
-                                    _availableTenants.value = list
-                                }
-                            }
-                    }
-                }
-            }
     }
 
     private fun checkUserTenantsAfterLogin(uid: String, onFinished: () -> Unit) {
@@ -527,21 +560,33 @@ class BusinessViewModel(
                         for (tId in authorizedTenants) {
                             firestore.collection("tenants").document(tId).get()
                                 .addOnSuccessListener { tDoc ->
-                                    val name = tDoc.getString("name") ?: tId
-                                    val voen = tDoc.getString("voen")
-                                    tenantsList.add(Tenant(id = tId, name = name, voen = voen))
+                                    if (isTenantDocActive(tDoc)) {
+                                        tenantsList.add(
+                                            Tenant(
+                                                id = tId,
+                                                name = tDoc.getString("name") ?: tId,
+                                                voen = tDoc.getString("voen")
+                                            )
+                                        )
+                                    }
                                     fetchedCount++
                                     if (fetchedCount == authorizedTenants.size) {
-                                        _availableTenants.value = tenantsList
-                                        _appStage.value = BusinessAppStage.TENANT_SELECT
+                                        val cleanList = tenantsList.distinctBy { it.id }
+                                        _availableTenants.value = cleanList
+                                        if (cleanList.size == 1) {
+                                            selectTenant(cleanList.first())
+                                        } else {
+                                            _appStage.value = BusinessAppStage.TENANT_SELECT
+                                        }
                                         onFinished()
                                     }
                                 }
                                 .addOnFailureListener {
                                     fetchedCount++
                                     if (fetchedCount == authorizedTenants.size) {
-                                        if (tenantsList.isNotEmpty()) {
-                                            _availableTenants.value = tenantsList
+                                        val cleanList = tenantsList.distinctBy { it.id }
+                                        if (cleanList.isNotEmpty()) {
+                                            _availableTenants.value = cleanList
                                             _appStage.value = BusinessAppStage.TENANT_SELECT
                                         } else {
                                             _appStage.value = BusinessAppStage.PIN_LOCK
@@ -554,9 +599,13 @@ class BusinessViewModel(
                         val tId = authorizedTenants.first()
                         firestore.collection("tenants").document(tId).get()
                             .addOnSuccessListener { tDoc ->
-                                val name = tDoc.getString("name") ?: (companyNameStr ?: "Müəssisə")
-                                val voen = tDoc.getString("voen")
-                                selectTenant(Tenant(id = tId, name = name, voen = voen))
+                                if (isTenantDocActive(tDoc)) {
+                                    val name = tDoc.getString("name") ?: (companyNameStr ?: "Müəssisə")
+                                    val voen = tDoc.getString("voen")
+                                    selectTenant(Tenant(id = tId, name = name, voen = voen))
+                                } else {
+                                    _appStage.value = BusinessAppStage.TENANT_SELECT
+                                }
                                 onFinished()
                             }
                             .addOnFailureListener {

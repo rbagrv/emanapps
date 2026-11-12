@@ -23,11 +23,11 @@ class BusinessRepository {
     private val firestore by lazy { FirebaseFirestore.getInstance() }
     private val auth by lazy { FirebaseAuth.getInstance() }
 
-    private val initialWarehouseItems = createInitialWarehouseItems()
-    private val initialWarehouseSummary = calculateWarehouseSummary(initialWarehouseItems)
-    private val initialDebtors = createInitialDebtors()
-    private val initialSuppliers = createInitialSuppliers()
-    private val initialSummary = createInitialSummary(initialWarehouseSummary, initialDebtors, initialSuppliers)
+    private val initialWarehouseItems = emptyList<WarehouseItem>()
+    private val initialWarehouseSummary = WarehouseSummary(0, 0.0, 0.0, 0.0, 0)
+    private val initialDebtors = emptyList<Debtor>()
+    private val initialSuppliers = emptyList<Supplier>()
+    private val initialSummary = BusinessSummary()
 
     private val _summary = MutableStateFlow(initialSummary)
     val summary: StateFlow<BusinessSummary> = _summary.asStateFlow()
@@ -74,9 +74,17 @@ class BusinessRepository {
     private var lastMobilePosCustomersDocs = emptyList<DocumentSnapshot>()
 
     // Real dynamic analytics cache
+    data class D1SaleEntry(
+        val dateStr: String,
+        val grossTotal: Double,
+        val cashAmount: Double,
+        val cardAmount: Double,
+        val cashierName: String
+    )
     private val realInvoices = mutableListOf<Map<String, Any>>()
     private val realPurchases = mutableListOf<Map<String, Any>>()
     private val realPosTransactions = mutableListOf<Map<String, Any>>()
+    private var d1PosSalesCache = listOf<D1SaleEntry>()
     private var d1TopProductsCache = listOf<TopProductSale>()
 
     fun loadUserProfile() {
@@ -161,10 +169,21 @@ class BusinessRepository {
         chatListener?.remove()
         posTransactionsListener?.remove()
 
-        _summary.value = _summary.value.copy(companyName = tenantName)
+        // Reset caches so previous tenant's data never bleeds into the new tenant
+        realInvoices.clear()
+        realPurchases.clear()
+        realPosTransactions.clear()
+        d1PosSalesCache = emptyList()
+        d1TopProductsCache = emptyList()
+        customerDebtFromPos.clear()
+        lastCustomersDocs = emptyList()
+        lastMobilePosCustomersDocs = emptyList()
 
-        // Seed tenant cloud collections if they don't have data yet
-        seedDefaultDataIfEmpty(tenantId, tenantName)
+        _debtors.value = emptyList()
+        _suppliers.value = emptyList()
+        _warehouseItems.value = emptyList()
+        _warehouseSummary.value = WarehouseSummary(0, 0.0, 0.0, 0.0, 0)
+        _summary.value = BusinessSummary(companyName = tenantName)
 
         // =========================================================
         // 1. REAL TENANT INFO: `tenants/{tenantId}`
@@ -557,11 +576,8 @@ class BusinessRepository {
                 if (cResp.isSuccessful && cResp.body()?.success == true) {
                     val d1Customers = cResp.body()?.customers ?: emptyList()
                     if (d1Customers.isNotEmpty()) {
-                        val debtorsList = d1Customers.mapIndexed { idx, c ->
-                            val debt = (c.balance ?: c.debt ?: 0.0).let {
-                                // If D1 registered customer has 0 explicit debt, assign realistic business trade account baseline
-                                if (it > 0.0) it else ((idx * 370 + 450) % 3200 + 350).toDouble()
-                            }
+                        val debtorsList = d1Customers.map { c ->
+                            val debt = (c.balance ?: c.debt ?: 0.0).coerceAtLeast(0.0)
                             val status = if (debt > 2500.0) DebtStatus.OVERDUE
                             else if (debt > 0.0) DebtStatus.ACTIVE
                             else DebtStatus.PAID
@@ -570,13 +586,13 @@ class BusinessRepository {
                                 id = c.id,
                                 fullName = c.name,
                                 companyName = if (!c.voen.isNullOrBlank()) "VÖEN: ${c.voen}" else "Müştəri",
-                                phone = c.phone?.ifBlank { null } ?: "+994 50 123 45 67",
+                                phone = c.phone?.ifBlank { null } ?: "-",
                                 totalDebt = debt,
                                 creditLimit = 5000.0,
                                 dueDate = "Dövri Hesablaşma",
-                                debtStartDate = "15.09.2026",
+                                debtStartDate = "",
                                 status = status,
-                                notes = "Cloudflare D1 bazasından inteqrasiya olunub"
+                                notes = "Cloudflare D1 bazasından"
                             )
                         }
 
@@ -591,7 +607,7 @@ class BusinessRepository {
                     }
                 }
 
-                // 3. Fetch POS Sales and Invoices directly from D1 SQL for 100% accurate turnover & cash/bank
+                // 3. Fetch POS Sales directly from D1 SQL filtered by tenant_id
                 val posSalesSql = """
                     SELECT 
                         cheque_date,
@@ -600,6 +616,7 @@ class BusinessRepository {
                         cashless_amount,
                         cashier_name
                     FROM pos_sales 
+                    WHERE tenant_id = ?
                     ORDER BY cheque_date DESC
                 """.trimIndent()
 
@@ -607,14 +624,14 @@ class BusinessRepository {
                     accountId = com.example.business.data.api.D1ApiClient.CF_ACCOUNT_ID,
                     databaseId = com.example.business.data.api.D1ApiClient.CF_D1_DATABASE_ID,
                     authHeader = com.example.business.data.api.D1ApiClient.CF_AUTH_HEADER,
-                    body = com.example.business.data.api.D1SqlQueryRequest(sql = posSalesSql)
+                    body = com.example.business.data.api.D1SqlQueryRequest(
+                        sql = posSalesSql,
+                        params = listOf(tenantId)
+                    )
                 )
 
-                var d1MonthSales = 0.0
-                var d1TodaySales = 0.0
                 var d1CashSales = 0.0
                 var d1CardSales = 0.0
-                val dayTotalsMap = mutableMapOf<String, Double>()
 
                 if (posResp.isSuccessful) {
                     val root = posResp.body()
@@ -622,60 +639,24 @@ class BusinessRepository {
                     if (resultArr != null && resultArr.size() > 0) {
                         val resultsObj = resultArr.get(0).asJsonObject
                         val rows = resultsObj.getAsJsonArray("results")
-                        if (rows != null && rows.size() > 0) {
-                            val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                            val currentMonthStr = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())
-
+                        if (rows != null) {
+                            val entries = mutableListOf<D1SaleEntry>()
                             for (i in 0 until rows.size()) {
                                 val r = rows.get(i).asJsonObject
-                                val dateStr = r.get("cheque_date")?.asString ?: ""
-                                val gross = r.get("gross_total")?.asDouble ?: 0.0
-                                val cash = r.get("cash_amount")?.asDouble ?: 0.0
-                                val card = r.get("cashless_amount")?.asDouble ?: 0.0
+                                val dateStr = r.get("cheque_date")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val gross = r.get("gross_total")?.takeIf { !it.isJsonNull }?.asDouble ?: 0.0
+                                val cash = r.get("cash_amount")?.takeIf { !it.isJsonNull }?.asDouble ?: 0.0
+                                val card = r.get("cashless_amount")?.takeIf { !it.isJsonNull }?.asDouble ?: 0.0
+                                val cashier = r.get("cashier_name")?.takeIf { !it.isJsonNull }?.asString ?: "Kassir"
 
                                 val dtPrefix = if (dateStr.length >= 10) dateStr.substring(0, 10) else dateStr
-                                dayTotalsMap[dtPrefix] = (dayTotalsMap[dtPrefix] ?: 0.0) + gross
-
-                                if (dateStr.startsWith(currentMonthStr)) {
-                                    d1MonthSales += gross
-                                    if (dateStr.startsWith(todayStr)) {
-                                        d1TodaySales += gross
-                                    }
-                                }
+                                entries.add(D1SaleEntry(dtPrefix, gross, cash, card, cashier))
                                 d1CashSales += cash
                                 d1CardSales += card
                             }
-
-                            // If no sales in current calendar month yet, take last 30 days active sales volume
-                            if (d1MonthSales <= 0.0) {
-                                d1MonthSales = rows.map { it.asJsonObject.get("gross_total")?.asDouble ?: 0.0 }.sum()
-                                d1TodaySales = (dayTotalsMap.values.firstOrNull() ?: (d1MonthSales / 25.0))
-                            }
-
-                            val cogs = d1MonthSales * 0.70
-                            val monthProfit = d1MonthSales - cogs
-                            val todayProfit = d1TodaySales * 0.30
-
-                            // Build dynamic weekly trend from real POS dates
-                            val sortedDays = dayTotalsMap.keys.sortedDescending().take(7).reversed()
-                            val dynamicTrend = sortedDays.mapIndexed { idx, dKey ->
-                                val dayAmount = dayTotalsMap[dKey] ?: 0.0
-                                val dayLabels = listOf("B.e", "Ç.a", "Çər", "C.a", "Cüm", "Şən", "Baz")
-                                DayStat(
-                                    dayName = dayLabels.getOrElse(idx % 7) { "Gün" },
-                                    salesAmount = dayAmount,
-                                    purchaseAmount = dayAmount * 0.70
-                                )
-                            }.ifEmpty { _summary.value.weeklyTrend }
-
-                            _summary.value = _summary.value.copy(
-                                todaySales = d1TodaySales,
-                                monthSales = d1MonthSales,
-                                todayProfit = todayProfit,
-                                monthProfit = monthProfit,
-                                weeklyTrend = dynamicTrend
-                            )
-                            Log.d("BusinessRepo", "Synced D1 POS Sales: Month=$d1MonthSales, Today=$d1TodaySales, Cash=$d1CashSales, Card=$d1CardSales")
+                            d1PosSalesCache = entries
+                            recalculateAnalytics()
+                            Log.d("BusinessRepo", "Synced ${entries.size} real D1 POS Sales for tenant $tenantId")
                         }
                     }
                 }
@@ -703,8 +684,8 @@ class BusinessRepository {
                                 val name = r.get("name")?.asString ?: "Təchizatçı"
                                 val voen = r.get("voen")?.takeIf { !it.isJsonNull }?.asString
                                 val phone = r.get("phone")?.takeIf { !it.isJsonNull }?.asString ?: "+994 12 400 00 00"
-                                val rawBalance = r.get("balance")?.asDouble ?: 0.0
-                                val balance = if (rawBalance > 0.0) rawBalance else ((i * 410 + 650) % 4500 + 400).toDouble()
+                                val rawBalance = r.get("balance")?.takeIf { !it.isJsonNull }?.asDouble ?: 0.0
+                                val balance = rawBalance.coerceAtLeast(0.0)
 
                                 supList.add(
                                     Supplier(
@@ -807,30 +788,24 @@ class BusinessRepository {
                             }
                         }
 
-                        // Ensure realistic baseline if D1 sub-account balances are yet unseeded
-                        if (totalKassa <= 0.0) totalKassa = 1420.0
-                        if (totalBank <= 0.0) totalBank = 10950.0
-
-                        if (accountItems.none { it.code == "223" }) {
-                            accountItems.add(
-                                AccountBalanceItem("223", "Bank Hesablaşma Hesabı (Kapital Bank AZN)", "Bank", totalBank)
+                        if (accountItems.isNotEmpty()) {
+                            _summary.value = _summary.value.copy(
+                                cashInHand = totalKassa,
+                                bankBalance = totalBank,
+                                accountBalances = accountItems
                             )
+                            Log.d("BusinessRepo", "Synced ${accountItems.size} Cash/Bank accounts. Kassa: $totalKassa, Bank: $totalBank")
                         }
-
-                        _summary.value = _summary.value.copy(
-                            cashInHand = totalKassa,
-                            bankBalance = totalBank,
-                            accountBalances = accountItems
-                        )
-                        Log.d("BusinessRepo", "Synced ${accountItems.size} Cash/Bank accounts. Kassa: $totalKassa, Bank: $totalBank")
                     }
                 }
 
-                // 6. Query Top Selling Products from pos_sale_items in D1
+                // 6. Query Top Selling Products from pos_sale_items in D1 filtered by tenant_id
                 val topProductsSql = """
-                    SELECT raw_name, SUM(quantity) as sold_qty, SUM(total_sum) as revenue, unit_price 
-                    FROM pos_sale_items 
-                    GROUP BY raw_name 
+                    SELECT psi.raw_name, SUM(psi.quantity) as sold_qty, SUM(psi.total_sum) as revenue, psi.unit_price 
+                    FROM pos_sale_items psi
+                    INNER JOIN pos_sales ps ON psi.sale_id = ps.id
+                    WHERE ps.tenant_id = ?
+                    GROUP BY psi.raw_name 
                     ORDER BY revenue DESC 
                     LIMIT 5
                 """.trimIndent()
@@ -839,7 +814,10 @@ class BusinessRepository {
                     accountId = com.example.business.data.api.D1ApiClient.CF_ACCOUNT_ID,
                     databaseId = com.example.business.data.api.D1ApiClient.CF_D1_DATABASE_ID,
                     authHeader = com.example.business.data.api.D1ApiClient.CF_AUTH_HEADER,
-                    body = com.example.business.data.api.D1SqlQueryRequest(sql = topProductsSql)
+                    body = com.example.business.data.api.D1SqlQueryRequest(
+                        sql = topProductsSql,
+                        params = listOf(tenantId)
+                    )
                 )
 
                 if (topProdResp.isSuccessful) {
@@ -935,9 +913,38 @@ class BusinessRepository {
         }
     }
 
+    private fun isDateInPeriod(dateStr: String, period: ReportPeriod): Boolean {
+        if (dateStr.isBlank()) return false
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val todayStr = sdf.format(Date())
+        val monthStr = todayStr.take(7)
+        val yearStr = todayStr.take(4)
+        return when (period) {
+            ReportPeriod.TODAY -> dateStr.startsWith(todayStr)
+            ReportPeriod.THIS_WEEK -> {
+                val cal = Calendar.getInstance()
+                cal.add(Calendar.DAY_OF_YEAR, -6)
+                val weekStart = sdf.format(cal.time)
+                dateStr.take(10) >= weekStart && dateStr.take(10) <= todayStr
+            }
+            ReportPeriod.THIS_MONTH -> dateStr.startsWith(monthStr)
+            ReportPeriod.THIS_YEAR -> dateStr.startsWith(yearStr)
+        }
+    }
+
+    private fun estimateCogsRatio(): Double {
+        val items = _warehouseItems.value.filter { it.salePrice > 0.0 && it.costPrice > 0.0 }
+        if (items.isEmpty()) return 0.0
+        val totalSale = items.sumOf { it.salePrice }
+        val totalCost = items.sumOf { it.costPrice }
+        return if (totalSale > 0.0) (totalCost / totalSale).coerceIn(0.0, 1.0) else 0.0
+    }
+
     private fun recalculateAnalytics() {
-        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val monthStr = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val todayStr = sdf.format(Date())
+        val monthStr = todayStr.take(7)
+        val cogsRatio = estimateCogsRatio()
 
         var todaySalesSum = 0.0
         var monthSalesSum = 0.0
@@ -946,15 +953,21 @@ class BusinessRepository {
         var todayCogsSum = 0.0
         var monthCogsSum = 0.0
 
+        val salesByDay = mutableMapOf<String, Double>()
+        val purchasesByDay = mutableMapOf<String, Double>()
+
         // 1. Process invoices from real ERP
         for (inv in realInvoices) {
             val status = inv["status"] as? String ?: "paid"
             if (status == "cancelled" || status == "draft") continue
 
-            val issueDate = (inv["issueDate"] as? String) ?: ""
+            val issueDate = ((inv["issueDate"] as? String) ?: "").take(10)
             val totalAmount = (inv["totalAmount"] as? Number)?.toDouble() ?: 0.0
-            val cogs = (inv["costOfGoodsSold"] as? Number)?.toDouble() ?: (totalAmount * 0.70)
+            val cogs = (inv["costOfGoodsSold"] as? Number)?.toDouble() ?: (totalAmount * cogsRatio)
 
+            if (issueDate.isNotBlank()) {
+                salesByDay[issueDate] = (salesByDay[issueDate] ?: 0.0) + totalAmount
+            }
             if (issueDate.startsWith(monthStr)) {
                 monthSalesSum += totalAmount
                 monthCogsSum += cogs
@@ -970,9 +983,12 @@ class BusinessRepository {
             val status = pur["status"] as? String ?: "received"
             if (status == "cancelled") continue
 
-            val issueDate = (pur["issueDate"] as? String) ?: ""
+            val issueDate = ((pur["issueDate"] as? String) ?: "").take(10)
             val totalAmount = (pur["totalAmount"] as? Number)?.toDouble() ?: 0.0
 
+            if (issueDate.isNotBlank()) {
+                purchasesByDay[issueDate] = (purchasesByDay[issueDate] ?: 0.0) + totalAmount
+            }
             if (issueDate.startsWith(monthStr)) {
                 monthPurchasesSum += totalAmount
                 if (issueDate == todayStr) {
@@ -981,23 +997,29 @@ class BusinessRepository {
             }
         }
 
-        // 3. Process POS transactions
+        // 3. Process Firestore POS transactions
         for (tx in realPosTransactions) {
             val type = tx["type"] as? String ?: "sale"
             val totalAmount = (tx["totalAmount"] as? Number)?.toDouble() ?: 0.0
             val timestamp = (tx["timestamp"] as? Number)?.toLong() ?: 0L
-            val dateStr = if (timestamp > 0) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timestamp)) else ""
+            val dateStr = if (timestamp > 0) sdf.format(Date(timestamp)) else ""
 
-            if (type == "sale") {
+            if (type == "sale" || type.isBlank()) {
+                if (dateStr.isNotBlank()) {
+                    salesByDay[dateStr] = (salesByDay[dateStr] ?: 0.0) + totalAmount
+                }
                 if (dateStr.startsWith(monthStr)) {
                     monthSalesSum += totalAmount
-                    monthCogsSum += (totalAmount * 0.70)
+                    monthCogsSum += (totalAmount * cogsRatio)
                     if (dateStr == todayStr) {
                         todaySalesSum += totalAmount
-                        todayCogsSum += (totalAmount * 0.70)
+                        todayCogsSum += (totalAmount * cogsRatio)
                     }
                 }
-            } else if (type == "purchase" || type == "expense") {
+            } else if (type == "purchase") {
+                if (dateStr.isNotBlank()) {
+                    purchasesByDay[dateStr] = (purchasesByDay[dateStr] ?: 0.0) + totalAmount
+                }
                 if (dateStr.startsWith(monthStr)) {
                     monthPurchasesSum += totalAmount
                     if (dateStr == todayStr) {
@@ -1007,99 +1029,189 @@ class BusinessRepository {
             }
         }
 
-        val todayProfitSum = todaySalesSum - todayCogsSum
-        val monthProfitSum = monthSalesSum - monthCogsSum
+        // 4. Process real Cloudflare D1 POS sales (for this tenant)
+        for (sale in d1PosSalesCache) {
+            val dateStr = sale.dateStr
+            val gross = sale.grossTotal
+            if (dateStr.isNotBlank()) {
+                salesByDay[dateStr] = (salesByDay[dateStr] ?: 0.0) + gross
+            }
+            if (dateStr.startsWith(monthStr)) {
+                monthSalesSum += gross
+                monthCogsSum += (gross * cogsRatio)
+                if (dateStr == todayStr) {
+                    todaySalesSum += gross
+                    todayCogsSum += (gross * cogsRatio)
+                }
+            }
+        }
 
-        // Preserve baseline if cloud calculations are zero
-        val finalTodaySales = if (todaySalesSum > 0.0) todaySalesSum else initialSummary.todaySales
-        val finalTodayPurchases = if (todayPurchasesSum > 0.0) todayPurchasesSum else initialSummary.todayPurchases
-        val finalTodayProfit = if (todaySalesSum > 0.0) todayProfitSum else initialSummary.todayProfit
-        val finalMonthSales = if (monthSalesSum > 0.0) monthSalesSum else initialSummary.monthSales
-        val finalMonthPurchases = if (monthPurchasesSum > 0.0) monthPurchasesSum else initialSummary.monthPurchases
-        val finalMonthProfit = if (monthSalesSum > 0.0) monthProfitSum else initialSummary.monthProfit
+        val todayProfitSum = if (todayCogsSum > 0.0) (todaySalesSum - todayCogsSum) else 0.0
+        val monthProfitSum = if (monthCogsSum > 0.0) (monthSalesSum - monthCogsSum) else 0.0
 
-        // Build dynamic weekly trend from real invoices & POS
-        val daysOfWeek = listOf("B.e", "Ç.a", "Çər", "C.a", "Cüm", "Şən", "Baz")
-        val dynamicWeeklyTrend = daysOfWeek.mapIndexed { idx, dayName ->
-            val dayFraction = (idx + 1.0) / 28.0
+        // Build real 7-day trend for the last 7 calendar days
+        val dayNameFormat = SimpleDateFormat("EEE", Locale("az"))
+        val dynamicWeeklyTrend = (6 downTo 0).map { daysAgo ->
+            val cal = Calendar.getInstance()
+            cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
+            val dStr = sdf.format(cal.time)
+            val label = when (cal.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.MONDAY -> "B.e"
+                Calendar.TUESDAY -> "Ç.a"
+                Calendar.WEDNESDAY -> "Çər"
+                Calendar.THURSDAY -> "C.a"
+                Calendar.FRIDAY -> "Cüm"
+                Calendar.SATURDAY -> "Şən"
+                Calendar.SUNDAY -> "Baz"
+                else -> dayNameFormat.format(cal.time)
+            }
             DayStat(
-                dayName = dayName,
-                salesAmount = (finalMonthSales * dayFraction).coerceAtLeast(0.0),
-                purchaseAmount = (finalMonthPurchases * dayFraction).coerceAtLeast(0.0)
+                dayName = label,
+                salesAmount = salesByDay[dStr] ?: 0.0,
+                purchaseAmount = purchasesByDay[dStr] ?: 0.0
             )
         }
 
         _summary.value = _summary.value.copy(
-            todaySales = finalTodaySales,
-            todayPurchases = finalTodayPurchases,
-            todayProfit = finalTodayProfit,
-            monthSales = finalMonthSales,
-            monthPurchases = finalMonthPurchases,
-            monthProfit = finalMonthProfit,
+            todaySales = todaySalesSum,
+            todayPurchases = todayPurchasesSum,
+            todayProfit = todayProfitSum,
+            monthSales = monthSalesSum,
+            monthPurchases = monthPurchasesSum,
+            monthProfit = monthProfitSum,
             weeklyTrend = dynamicWeeklyTrend
         )
     }
 
     // -------------------------------------------------------------
-    // Real Reports Calculation based on Real ERP data
+    // 100% Real Reports Calculation based on Real ERP & D1 data
     // -------------------------------------------------------------
     fun getReport(period: ReportPeriod): PeriodReport {
-        val s = _summary.value
-        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val monthStr = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val cogsRatio = estimateCogsRatio()
 
-        val (sales, purchases, cogs, checkCount) = when (period) {
-            ReportPeriod.TODAY -> {
-                val invoicesCount = realInvoices.count { (it["issueDate"] as? String) == todayStr }
-                val posCount = realPosTransactions.count {
-                    val ts = (it["timestamp"] as? Number)?.toLong() ?: 0L
-                    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(ts)) == todayStr
-                }
-                Tuple4(s.todaySales, s.todayPurchases, s.todaySales - s.todayProfit, (invoicesCount + posCount).coerceAtLeast(1))
+        var sales = 0.0
+        var purchases = 0.0
+        var cogs = 0.0
+        var checkCount = 0
+        var cashSales = 0.0
+        var cardSales = 0.0
+        var debtSales = 0.0
+
+        val cashierTotals = mutableMapOf<String, CashierPerformance>()
+
+        // 1. Invoices
+        for (inv in realInvoices) {
+            val status = inv["status"] as? String ?: "paid"
+            if (status == "cancelled" || status == "draft") continue
+            val issueDate = (inv["issueDate"] as? String) ?: ""
+            if (!isDateInPeriod(issueDate, period)) continue
+
+            val totalAmount = (inv["totalAmount"] as? Number)?.toDouble() ?: 0.0
+            val paidAmount = (inv["paidAmount"] as? Number)?.toDouble() ?: totalAmount
+            val invCogs = (inv["costOfGoodsSold"] as? Number)?.toDouble() ?: (totalAmount * cogsRatio)
+            val payType = (inv["paymentType"] as? String) ?: "Bank"
+
+            sales += totalAmount
+            cogs += invCogs
+            checkCount++
+
+            when {
+                payType.contains("Nağd", ignoreCase = true) -> cashSales += paidAmount
+                payType.contains("Nisyə", ignoreCase = true) -> debtSales += totalAmount
+                else -> cardSales += paidAmount
             }
-            ReportPeriod.THIS_WEEK -> {
-                val weekSales = (s.monthSales * 0.30)
-                val weekPurchases = (s.monthPurchases * 0.30)
-                Tuple4(weekSales, weekPurchases, weekSales - (s.monthProfit * 0.30), 12)
-            }
-            ReportPeriod.THIS_MONTH -> {
-                val invoicesCount = realInvoices.count { (it["issueDate"] as? String)?.startsWith(monthStr) == true }
-                val posCount = realPosTransactions.count {
-                    val ts = (it["timestamp"] as? Number)?.toLong() ?: 0L
-                    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(ts)).startsWith(monthStr)
-                }
-                Tuple4(s.monthSales, s.monthPurchases, s.monthSales - s.monthProfit, (invoicesCount + posCount).coerceAtLeast(1))
-            }
-            ReportPeriod.THIS_YEAR -> {
-                val yearSales = s.monthSales * 1.5
-                val yearPurchases = s.monthPurchases * 1.5
-                Tuple4(yearSales, yearPurchases, yearSales - (s.monthProfit * 1.5), 25)
+            if (totalAmount > paidAmount) {
+                debtSales += (totalAmount - paidAmount)
             }
         }
 
-        val profit = sales - cogs
-        val margin = if (sales > 0) ((profit / sales) * 100).coerceIn(0.0, 100.0) else 0.0
+        // 2. Purchases
+        for (pur in realPurchases) {
+            val status = pur["status"] as? String ?: "received"
+            if (status == "cancelled") continue
+            val issueDate = (pur["issueDate"] as? String) ?: ""
+            if (!isDateInPeriod(issueDate, period)) continue
+            purchases += (pur["totalAmount"] as? Number)?.toDouble() ?: 0.0
+        }
+
+        // 3. Firestore POS Transactions
+        for (tx in realPosTransactions) {
+            val timestamp = (tx["timestamp"] as? Number)?.toLong() ?: 0L
+            val dateStr = if (timestamp > 0) sdf.format(Date(timestamp)) else ""
+            if (!isDateInPeriod(dateStr, period)) continue
+
+            val type = tx["type"] as? String ?: "sale"
+            val totalAmount = (tx["totalAmount"] as? Number)?.toDouble() ?: 0.0
+
+            if (type == "sale" || type.isBlank()) {
+                sales += totalAmount
+                cogs += (totalAmount * cogsRatio)
+                checkCount++
+
+                val payType = (tx["paymentType"] as? String) ?: "Nağd"
+                val cashPaid = (tx["cashPaid"] as? Number)?.toDouble() ?: 0.0
+                val cardPaid = (tx["cardPaid"] as? Number)?.toDouble() ?: 0.0
+
+                when {
+                    payType.contains("Qarışıq", ignoreCase = true) -> {
+                        cashSales += cashPaid
+                        cardSales += cardPaid
+                    }
+                    payType.contains("Kart", ignoreCase = true) -> cardSales += if (cardPaid > 0) cardPaid else totalAmount
+                    payType.contains("Nisyə", ignoreCase = true) -> debtSales += totalAmount
+                    else -> cashSales += if (cashPaid > 0) cashPaid else totalAmount
+                }
+
+                val cName = (tx["cashierName"] as? String)?.ifBlank { null } ?: "POS Kassir"
+                val prev = cashierTotals[cName]
+                val txCash = when {
+                    payType.contains("Qarışıq", ignoreCase = true) -> cashPaid
+                    payType.contains("Nağd", ignoreCase = true) -> if (cashPaid > 0) cashPaid else totalAmount
+                    else -> 0.0
+                }
+                val txCard = when {
+                    payType.contains("Qarışıq", ignoreCase = true) -> cardPaid
+                    payType.contains("Kart", ignoreCase = true) -> if (cardPaid > 0) cardPaid else totalAmount
+                    else -> 0.0
+                }
+                cashierTotals[cName] = CashierPerformance(
+                    cashierName = cName,
+                    checksCount = (prev?.checksCount ?: 0) + 1,
+                    totalSales = (prev?.totalSales ?: 0.0) + totalAmount,
+                    cashAmount = (prev?.cashAmount ?: 0.0) + txCash,
+                    cardAmount = (prev?.cardAmount ?: 0.0) + txCard
+                )
+            } else if (type == "purchase") {
+                purchases += totalAmount
+            }
+        }
+
+        // 4. D1 POS Sales
+        for (sale in d1PosSalesCache) {
+            if (!isDateInPeriod(sale.dateStr, period)) continue
+            sales += sale.grossTotal
+            cogs += (sale.grossTotal * cogsRatio)
+            checkCount++
+            cashSales += sale.cashAmount
+            cardSales += sale.cardAmount
+
+            val cName = sale.cashierName.ifBlank { "POS Kassir" }
+            val prev = cashierTotals[cName]
+            cashierTotals[cName] = CashierPerformance(
+                cashierName = cName,
+                checksCount = (prev?.checksCount ?: 0) + 1,
+                totalSales = (prev?.totalSales ?: 0.0) + sale.grossTotal,
+                cashAmount = (prev?.cashAmount ?: 0.0) + sale.cashAmount,
+                cardAmount = (prev?.cardAmount ?: 0.0) + sale.cardAmount
+            )
+        }
+
+        val profit = if (cogs > 0.0) (sales - cogs) else 0.0
+        val margin = if (sales > 0.0 && cogs > 0.0) ((profit / sales) * 100.0).coerceIn(0.0, 100.0) else 0.0
         val avgCheck = if (checkCount > 0) sales / checkCount else 0.0
 
-        // Real Top Products from current D1 POS sales / catalogue
-        val topProds = d1TopProductsCache.ifEmpty {
-            _warehouseItems.value.take(5).map { item ->
-                TopProductSale(
-                    productName = item.name,
-                    quantitySold = item.stock.coerceAtLeast(1.0),
-                    unit = item.unit,
-                    totalRevenue = item.salePrice * item.stock.coerceAtLeast(1.0)
-                )
-            }.ifEmpty {
-                listOf(
-                    TopProductSale("Ümumi Məhsullar", 1.0, "ədəd", sales)
-                )
-            }
-        }
-
-        val cashierPerf = listOf(
-            CashierPerformance("Kassir / POS Operatoru", checkCount, sales, sales * 0.15, sales * 0.85)
-        )
+        val cashierPerf = cashierTotals.values.sortedByDescending { it.totalSales }
 
         return PeriodReport(
             period = period,
@@ -1109,36 +1221,52 @@ class BusinessRepository {
             marginPercent = margin,
             checkCount = checkCount,
             averageCheck = avgCheck,
-            cashSales = sales * 0.65,
-            cardSales = sales * 0.35,
-            debtSales = 0.0,
-            topProducts = topProds,
+            cashSales = cashSales,
+            cardSales = cardSales,
+            debtSales = debtSales,
+            topProducts = d1TopProductsCache,
             cashiers = cashierPerf
         )
     }
 
     fun getProfitAndLoss(period: ReportPeriod): ProfitAndLossReport {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val baseReport = getReport(period)
         val revenue = baseReport.totalSales
-        val cogs = baseReport.totalPurchases
+        val cogsRatio = estimateCogsRatio()
+        val cogs = if (cogsRatio > 0.0) revenue * cogsRatio else baseReport.totalPurchases
         val grossProfit = (revenue - cogs).coerceAtLeast(0.0)
-        val grossMargin = if (revenue > 0) (grossProfit / revenue) * 100 else 0.0
+        val grossMargin = if (revenue > 0.0) (grossProfit / revenue) * 100.0 else 0.0
 
-        val salaries = revenue * 0.12
-        val rent = when (period) {
-            ReportPeriod.TODAY -> 50.0
-            ReportPeriod.THIS_WEEK -> 350.0
-            ReportPeriod.THIS_MONTH -> 1500.0
-            ReportPeriod.THIS_YEAR -> 18000.0
+        var salaries = 0.0
+        var rent = 0.0
+        var utilities = 0.0
+        var logistics = 0.0
+        var otherExpenses = 0.0
+
+        for (tx in realPosTransactions) {
+            val type = tx["type"] as? String ?: ""
+            if (type != "expense") continue
+            val timestamp = (tx["timestamp"] as? Number)?.toLong() ?: 0L
+            val dateStr = if (timestamp > 0) sdf.format(Date(timestamp)) else ""
+            if (!isDateInPeriod(dateStr, period)) continue
+
+            val amt = (tx["totalAmount"] as? Number)?.toDouble() ?: 0.0
+            val cat = ((tx["category"] as? String) ?: (tx["note"] as? String) ?: "").lowercase(Locale.ROOT)
+            when {
+                cat.contains("əmək") || cat.contains("maaş") -> salaries += amt
+                cat.contains("icarə") || cat.contains("arenda") -> rent += amt
+                cat.contains("kommunal") || cat.contains("işıq") || cat.contains("qaz") -> utilities += amt
+                cat.contains("logistika") || cat.contains("nəqliyyat") || cat.contains("çatdırılma") -> logistics += amt
+                else -> otherExpenses += amt
+            }
         }
-        val utilities = revenue * 0.03
-        val logistics = revenue * 0.04
-        val otherExpenses = revenue * 0.02
+
         val totalExpenses = salaries + rent + utilities + logistics + otherExpenses
         val operatingProfit = grossProfit - totalExpenses
-        val taxExpense = (revenue * 0.02)
+        val taxExpense = 0.0
         val netProfit = operatingProfit - taxExpense
-        val netMargin = if (revenue > 0) (netProfit / revenue) * 100 else 0.0
+        val netMargin = if (revenue > 0.0) (netProfit / revenue) * 100.0 else 0.0
 
         return ProfitAndLossReport(
             revenue = revenue,
@@ -1165,16 +1293,16 @@ class BusinessRepository {
         val receivables = s.totalReceivables
         val inventory = s.warehouseStockValue
         val totalCurrentAssets = cashAndBank + receivables + inventory
-        val fixedAssets = 25000.0
+        val fixedAssets = 0.0
         val totalAssets = totalCurrentAssets + fixedAssets
 
         val payables = s.totalPayables
-        val taxDebt = (s.monthSales * 0.02 * 0.45).coerceAtLeast(240.0)
-        val shortTermLoans = 2000.0
+        val taxDebt = 0.0
+        val shortTermLoans = 0.0
         val totalCurrentLiabilities = payables + taxDebt + shortTermLoans
 
-        val charterCapital = 10000.0
-        val retainedEarnings = totalAssets - totalCurrentLiabilities - charterCapital
+        val charterCapital = 0.0
+        val retainedEarnings = totalAssets - totalCurrentLiabilities
         val totalEquity = charterCapital + retainedEarnings
 
         return BalanceSheetReport(
@@ -1197,12 +1325,13 @@ class BusinessRepository {
 
     fun getCashFlow(period: ReportPeriod): CashFlowReport {
         val baseReport = getReport(period)
-        val sales = baseReport.totalSales
-        val purchases = baseReport.totalPurchases
-        val salaries = sales * 0.12
-        val expenses = sales * 0.08
-        val taxes = sales * 0.02
-        val netOperating = sales - (purchases + salaries + expenses + taxes)
+        val pnl = getProfitAndLoss(period)
+        val inflowSales = baseReport.cashSales + baseReport.cardSales
+        val outflowSuppliers = baseReport.totalPurchases
+        val outflowSalaries = pnl.salaries
+        val outflowExpenses = pnl.rent + pnl.utilities + pnl.logistics + pnl.otherExpenses
+        val outflowTaxes = pnl.taxExpense
+        val netOperating = inflowSales - (outflowSuppliers + outflowSalaries + outflowExpenses + outflowTaxes)
         val investments = 0.0
         val netCash = netOperating - investments
         val s = _summary.value
@@ -1210,11 +1339,11 @@ class BusinessRepository {
         val openingCash = (closingCash - netCash).coerceAtLeast(0.0)
 
         return CashFlowReport(
-            inflowSales = sales,
-            outflowSuppliers = purchases,
-            outflowSalaries = salaries,
-            outflowExpenses = expenses,
-            outflowTaxes = taxes,
+            inflowSales = inflowSales,
+            outflowSuppliers = outflowSuppliers,
+            outflowSalaries = outflowSalaries,
+            outflowExpenses = outflowExpenses,
+            outflowTaxes = outflowTaxes,
             netOperatingCashFlow = netOperating,
             outflowInvestments = investments,
             netCashFlow = netCash,
@@ -1224,20 +1353,16 @@ class BusinessRepository {
     }
 
     fun getTaxReport(period: ReportPeriod): TaxLiabilityReport {
-        val s = _summary.value
-        val sales = when (period) {
-            ReportPeriod.TODAY -> s.todaySales
-            ReportPeriod.THIS_WEEK -> s.monthSales * 0.30
-            ReportPeriod.THIS_MONTH -> s.monthSales
-            ReportPeriod.THIS_YEAR -> s.monthSales * 1.5
-        }
+        val baseReport = getReport(period)
+        val sales = baseReport.totalSales
+        val pnl = getProfitAndLoss(period)
         val simplified = sales * 0.02
-        val vat = sales * 0.18
-        val income = (sales * 0.20) * 0.20
-        val dsmf = (sales * 0.12) * 0.22
-        val its = (sales * 0.12) * 0.02
+        val vat = sales * 0.18 / 1.18
+        val income = (pnl.operatingProfit.coerceAtLeast(0.0)) * 0.20
+        val dsmf = pnl.salaries * 0.22
+        val its = pnl.salaries * 0.02
         val totalCalculated = simplified + dsmf + its
-        val totalPaid = totalCalculated * 0.65
+        val totalPaid = 0.0
         val taxDebt = totalCalculated - totalPaid
 
         return TaxLiabilityReport(
@@ -1249,8 +1374,8 @@ class BusinessRepository {
             totalCalculated = totalCalculated,
             totalPaid = totalPaid,
             taxDebt = taxDebt,
-            deadline = "20 Oktyabr 2026",
-            status = if (taxDebt > 1000) "Ödəniş müddəti yaxınlaşır" else "Cari qaydada"
+            deadline = "Növbəti ayın 20-si",
+            status = if (taxDebt > 0.0) "Hesablanıb" else "Cari qaydada"
         )
     }
 

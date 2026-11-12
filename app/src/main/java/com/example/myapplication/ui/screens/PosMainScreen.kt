@@ -24,6 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -32,13 +33,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import com.example.myapplication.data.HeldOrder
 import com.example.myapplication.data.Product
 import com.example.myapplication.data.ReceiptData
 import com.example.myapplication.ui.PosViewModel
 import com.example.myapplication.ui.components.BarcodeScanner
+import com.example.myapplication.ui.components.CartBottomSheet
+import com.example.myapplication.ui.components.ModernProductListRow
+import com.example.myapplication.ui.components.ZReportDialog
 import com.example.myapplication.ui.theme.EmanagerBlue
+import com.example.myapplication.ui.theme.EmanagerBlueDeep
 import com.example.myapplication.ui.theme.EmanagerGreen
+import com.example.myapplication.ui.theme.EmanagerIndigo
 import com.example.myapplication.ui.theme.EmanagerOrange
 import com.example.myapplication.ui.theme.EmanagerRose
 import com.example.myapplication.ui.theme.Slate100
@@ -83,8 +90,15 @@ fun PosMainScreen(
     val todayCashTotal by viewModel.todayCashTotal.collectAsState()
     val todayCardTotal by viewModel.todayCardTotal.collectAsState()
     val todayAvgBasket by viewModel.todayAvgBasket.collectAsState()
+    val transactions by viewModel.transactions.collectAsState()
+    val cashOperations by viewModel.cashOperations.collectAsState()
+    val cashBalance by viewModel.cashBalance.collectAsState()
 
     var showAnalyticsBar by remember { mutableStateOf(false) }
+    var showCartSheet by remember { mutableStateOf(false) }
+    var showZReportDialog by remember { mutableStateOf(false) }
+    var isGridView by remember { mutableStateOf(true) }
+    var sortMode by remember { mutableStateOf("default") } // "default", "price_asc", "stock_asc"
     var showCameraScanner by remember { mutableStateOf(false) }
     var showManualBarcodeDialog by remember { mutableStateOf(false) }
     var showSelectCustomerDialog by remember { mutableStateOf(false) }
@@ -109,20 +123,26 @@ fun PosMainScreen(
 
     val allCategories = remember(categoriesList, products) {
         val prodCats = products.map { it.category }.filter { it.isNotBlank() }
-        (listOf("Hamısı", "⭐ Sevimlilər") + categoriesList.filter { it != "Hamısı" } + prodCats).distinct()
+        (listOf("Hamısı", "⭐ Sevimlilər", "⚠️ Az qalan") + categoriesList.filter { it != "Hamısı" } + prodCats).distinct()
     }
 
-    val filteredProducts = remember(products, selectedCategory, searchQuery) {
-        products.filter { product ->
+    val filteredProducts = remember(products, selectedCategory, searchQuery, sortMode) {
+        val base = products.filter { product ->
             val matchesCategory = when (selectedCategory) {
                 "Hamısı" -> true
                 "⭐ Sevimlilər" -> product.isFavorite
+                "⚠️ Az qalan" -> product.stockQuantity <= 5.0
                 else -> product.category.equals(selectedCategory, ignoreCase = true)
             }
             val matchesSearch = searchQuery.isBlank() ||
                     product.name.contains(searchQuery, ignoreCase = true) ||
                     (product.barcode?.contains(searchQuery) == true)
             matchesCategory && matchesSearch
+        }
+        when (sortMode) {
+            "price_asc" -> base.sortedBy { it.price }
+            "stock_asc" -> base.sortedBy { it.stockQuantity }
+            else -> base
         }
     }
 
@@ -501,6 +521,39 @@ fun PosMainScreen(
         )
     }
 
+    // 11. Interactive Cart Bottom Sheet
+    if (showCartSheet && cartItems.isNotEmpty()) {
+        CartBottomSheet(
+            cartItems = cartItems,
+            customerName = selectedCustomer ?: "Pərakəndə Alıcı",
+            subtotalAmount = subtotalAmount,
+            discountPercent = cartDiscountPercent,
+            discountTotal = discountTotal,
+            totalAmount = totalAmount,
+            onIncrement = { viewModel.updateQuantity(it, 1) },
+            onDecrement = { viewModel.updateQuantity(it, -1) },
+            onRemove = { viewModel.removeFromCart(it) },
+            onToggleReturn = { viewModel.toggleCartItemReturn(it) },
+            onSetItemDiscount = { id, disc -> viewModel.setCartItemDiscount(id, disc) },
+            onHoldOrder = { showHoldPromptDialog = true },
+            onProceedToCheckout = { showCheckoutDialog = true },
+            onDismiss = { showCartSheet = false }
+        )
+    }
+
+    // 12. End-of-Day Z-Report Dialog
+    if (showZReportDialog) {
+        ZReportDialog(
+            companyName = companyName,
+            cashierName = cashierName,
+            transactions = transactions,
+            cashOperations = cashOperations,
+            cashBalance = cashBalance,
+            context = context,
+            onDismiss = { showZReportDialog = false }
+        )
+    }
+
     // ==========================================
     // MAIN SCREEN CONTENT
     // ==========================================
@@ -511,16 +564,21 @@ fun PosMainScreen(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
 
-            // 1. TOP HEADER (BRAND ROYAL BLUE)
-            Surface(
-                color = EmanagerBlue,
-                shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
-                modifier = Modifier.fillMaxWidth()
+            // 1. TOP HEADER (MODERN FINTECH GRADIENT)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(EmanagerBlue, EmanagerBlueDeep, EmanagerIndigo)
+                        )
+                    )
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -575,6 +633,18 @@ fun PosMainScreen(
                                         Text("${heldOrders.size}", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
                                     }
                                 }
+                            }
+
+                            // Z-Report button
+                            IconButton(
+                                onClick = { showZReportDialog = true },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                    contentDescription = "Z-Hesabat",
+                                    tint = Color.White
+                                )
                             }
 
                             // Analytics toggle button
@@ -808,28 +878,81 @@ fun PosMainScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // 3. CATEGORY HORIZONTAL PILLS
+            // 3. CATEGORY HORIZONTAL PILLS + VIEW / SORT CONTROLS
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                allCategories.forEach { category ->
-                    val isSelected = category.equals(selectedCategory, ignoreCase = true)
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (isSelected) EmanagerBlue else MaterialTheme.colorScheme.surfaceVariant,
-                        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(0.8.dp, Slate200),
-                        modifier = Modifier.clickable { viewModel.selectCategory(category) }
-                    ) {
-                        Text(
-                            text = category,
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    allCategories.forEach { category ->
+                        val isSelected = category.equals(selectedCategory, ignoreCase = true)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) EmanagerBlue else MaterialTheme.colorScheme.surfaceVariant,
+                            border = if (isSelected) null else androidx.compose.foundation.BorderStroke(0.8.dp, MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.clickable { viewModel.selectCategory(category) }
+                        ) {
+                            Text(
+                                text = category,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Sort cycle button
+                Surface(
+                    onClick = {
+                        sortMode = when (sortMode) {
+                            "default" -> "price_asc"
+                            "price_asc" -> "stock_asc"
+                            else -> "default"
+                        }
+                        val label = when (sortMode) {
+                            "price_asc" -> "Qiymətə görə (Artan)"
+                            "stock_asc" -> "Stoka görə (Azdan çoxa)"
+                            else -> "Standart sıra"
+                        }
+                        Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (sortMode != "default") EmanagerBlue.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.SwapVert,
+                            contentDescription = "Çeşidlə",
+                            tint = if (sortMode != "default") EmanagerBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                // Grid / List toggle button
+                Surface(
+                    onClick = { isGridView = !isGridView },
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (isGridView) Icons.Default.ViewAgenda else Icons.Default.GridView,
+                            contentDescription = "Görünüş",
+                            tint = EmanagerBlue,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -862,7 +985,7 @@ fun PosMainScreen(
                         }
                     }
                 }
-            } else {
+            } else if (isGridView) {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
                     modifier = Modifier
@@ -885,12 +1008,34 @@ fun PosMainScreen(
                         )
                     }
                 }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 12.dp),
+                    contentPadding = PaddingValues(bottom = if (cartItems.isNotEmpty()) 96.dp else 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filteredProducts, key = { it.id }) { product ->
+                        val itemInCart = cartItems.find { it.product.id == product.id }
+                        ModernProductListRow(
+                            product = product,
+                            quantityInCart = itemInCart?.quantity ?: 0,
+                            onAddToCart = { viewModel.addToCart(product) },
+                            onIncrement = { viewModel.updateQuantity(product.id, 1) },
+                            onDecrement = { viewModel.updateQuantity(product.id, -1) },
+                            onToggleFavorite = { viewModel.toggleFavoriteProduct(product.id) }
+                        )
+                    }
+                }
             }
         }
 
         // 5. FLOATING BOTTOM CART BAR (IF ITEMS IN CART)
         if (cartItems.isNotEmpty()) {
             Surface(
+                onClick = { showCartSheet = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()

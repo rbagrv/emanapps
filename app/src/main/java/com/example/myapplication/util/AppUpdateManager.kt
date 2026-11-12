@@ -1,14 +1,22 @@
 package com.example.myapplication.util
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.example.myapplication.BuildConfig
+import com.example.myapplication.MainActivity
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
@@ -16,8 +24,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -46,6 +56,10 @@ sealed class PosUpdateStatus {
 object PosAppUpdateManager {
     private const val TAG = "PosAppUpdateManager"
     private const val UPDATES_MANIFEST_URL = "https://raw.githubusercontent.com/rbagrv/emanapps/main/app_updates.json"
+    private const val D1_QUERY_URL = "https://api.cloudflare.com/client/v4/accounts/998c5b83aa3cdafa7f4325d5ee1791f2/d1/database/682601ec-f260-421b-bbe3-d9824fd82b95/query"
+    private const val D1_AUTH_TOKEN = "Bearer cfat_fRTPrXdOjVACm5ibMRhczAs5tNjKlgxmgomAyuyO58760cf8"
+    private const val UPDATE_CHANNEL_ID = "emanager_pos_updates"
+    private const val UPDATE_NOTIFICATION_ID = 9001
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -59,56 +73,125 @@ object PosAppUpdateManager {
     private val _updateStatus = MutableStateFlow<PosUpdateStatus>(PosUpdateStatus.Idle)
     val updateStatus: StateFlow<PosUpdateStatus> = _updateStatus.asStateFlow()
 
-    suspend fun checkForUpdates(forceSilent: Boolean = false): PosUpdateStatus {
+    private fun fetchFromD1(): PosUpdateInfo? {
+        return try {
+            val payload = """{"sql":"SELECT version_code, version_name, apk_name, download_url, release_notes, force_update FROM app_updates WHERE id = 'pos' LIMIT 1"}"""
+                .toRequestBody("application/json".toMediaType())
+            val req = Request.Builder()
+                .url(D1_QUERY_URL)
+                .header("Authorization", D1_AUTH_TOKEN)
+                .post(payload)
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            if (!resp.isSuccessful) return null
+            val bodyStr = resp.body?.string() ?: return null
+            val root = gson.fromJson(bodyStr, JsonObject::class.java)
+            val rows = root?.getAsJsonArray("result")?.firstOrNull()?.asJsonObject?.getAsJsonArray("results")
+            val row = rows?.firstOrNull()?.asJsonObject ?: return null
+            PosUpdateInfo(
+                appType = "pos",
+                newVersionCode = row.get("version_code")?.asInt ?: 0,
+                newVersionName = row.get("version_name")?.asString ?: "",
+                apkName = row.get("apk_name")?.asString ?: "e-Manager_POS_latest.apk",
+                downloadUrl = row.get("download_url")?.asString ?: "",
+                releaseNotes = row.get("release_notes")?.asString ?: "POS Kassa üçün yeni versiya mövcuddur.",
+                forceUpdate = (row.get("force_update")?.asInt ?: 0) == 1
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "D1 update check fallback to GitHub: ${e.message}")
+            null
+        }
+    }
+
+    private fun fetchFromGitHub(): PosUpdateInfo? {
+        val request = Request.Builder()
+            .url("$UPDATES_MANIFEST_URL?nocache=${System.currentTimeMillis()}")
+            .header("Cache-Control", "no-cache")
+            .build()
+        val response = httpClient.newCall(request).execute()
+        if (!response.isSuccessful) return null
+        val bodyStr = response.body?.string() ?: return null
+        val rootJson = gson.fromJson(bodyStr, JsonObject::class.java)
+        val posJson = rootJson?.getAsJsonObject("pos") ?: return null
+        return PosUpdateInfo(
+            appType = "pos",
+            newVersionCode = posJson.get("versionCode")?.asInt ?: 0,
+            newVersionName = posJson.get("versionName")?.asString ?: "",
+            apkName = posJson.get("apkName")?.asString ?: "e-Manager_POS_latest.apk",
+            downloadUrl = posJson.get("downloadUrl")?.asString ?: "",
+            releaseNotes = posJson.get("releaseNotes")?.asString ?: "POS Kassa üçün yeni versiya mövcuddur.",
+            forceUpdate = posJson.get("forceUpdate")?.asBoolean ?: false
+        )
+    }
+
+    private fun showUpdateNotification(context: Context, info: PosUpdateInfo) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    UPDATE_CHANNEL_ID,
+                    "Proqram Yenilənmələri",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "e-Manager POS yeni versiya bildirişləri"
+                }
+                nm.createNotificationChannel(channel)
+            }
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(context, UPDATE_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("🚀 Yeni e-Manager POS v${info.newVersionName}")
+                .setContentText(info.releaseNotes)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(info.releaseNotes))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+            nm.notify(UPDATE_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to post update notification: ${e.message}")
+        }
+    }
+
+    suspend fun checkForUpdates(forceSilent: Boolean = false, context: Context? = null): PosUpdateStatus {
         return withContext(Dispatchers.IO) {
             try {
                 if (!forceSilent) {
                     _updateStatus.value = PosUpdateStatus.Checking
                 }
 
-                val request = Request.Builder()
-                    .url("$UPDATES_MANIFEST_URL?nocache=${System.currentTimeMillis()}")
-                    .header("Cache-Control", "no-cache")
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    val status = PosUpdateStatus.Error("Yenilənmə serverinə qoşulmaq mümkün olmadı (HTTP ${response.code})")
+                val info = fetchFromD1() ?: fetchFromGitHub()
+                if (info == null) {
+                    val status = PosUpdateStatus.Error("Yenilənmə serverinə qoşulmaq mümkün olmadı")
                     if (!forceSilent) _updateStatus.value = status
                     return@withContext status
                 }
 
-                val bodyStr = response.body?.string() ?: ""
-                val rootJson = gson.fromJson(bodyStr, JsonObject::class.java)
-                val posJson = rootJson?.getAsJsonObject("pos")
+                val currentVersionCode = BuildConfig.VERSION_CODE
+                val currentVersionName = BuildConfig.VERSION_NAME
 
-                if (posJson != null) {
-                    val remoteVersionCode = posJson.get("versionCode")?.asInt ?: 0
-                    val remoteVersionName = posJson.get("versionName")?.asString ?: ""
-                    val apkName = posJson.get("apkName")?.asString ?: "e-Manager_POS_latest.apk"
-                    val downloadUrl = posJson.get("downloadUrl")?.asString ?: ""
-                    val releaseNotes = posJson.get("releaseNotes")?.asString ?: "POS Kassa üçün yeni versiya mövcuddur."
-                    val forceUpdate = posJson.get("forceUpdate")?.asBoolean ?: false
+                Log.d(TAG, "POS Update check - Current: $currentVersionCode (v$currentVersionName), Remote: ${info.newVersionCode} (v${info.newVersionName})")
 
-                    val currentVersionCode = BuildConfig.VERSION_CODE
-                    val currentVersionName = BuildConfig.VERSION_NAME
-
-                    Log.d(TAG, "POS Update check - Current: $currentVersionCode (v$currentVersionName), Remote: $remoteVersionCode (v$remoteVersionName)")
-
-                    if (remoteVersionCode > currentVersionCode || (remoteVersionName != currentVersionName && remoteVersionCode >= currentVersionCode)) {
-                        val info = PosUpdateInfo(
-                            appType = "pos",
-                            newVersionCode = remoteVersionCode,
-                            newVersionName = remoteVersionName,
-                            apkName = apkName,
-                            downloadUrl = downloadUrl,
-                            releaseNotes = releaseNotes,
-                            forceUpdate = forceUpdate
-                        )
-                        val status = PosUpdateStatus.Available(info)
-                        _updateStatus.value = status
-                        return@withContext status
-                    }
+                if (info.newVersionCode > currentVersionCode ||
+                    (info.newVersionName != currentVersionName && info.newVersionCode >= currentVersionCode)
+                ) {
+                    context?.let { showUpdateNotification(it, info) }
+                    val status = PosUpdateStatus.Available(info)
+                    _updateStatus.value = status
+                    return@withContext status
                 }
 
                 val upToDate = PosUpdateStatus.UpToDate

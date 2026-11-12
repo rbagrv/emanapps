@@ -914,6 +914,26 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         recalculateTotal()
     }
 
+    fun toggleCartItemReturn(productId: String) {
+        val currentList = _cartItems.value.toMutableList()
+        val index = currentList.indexOfFirst { it.product.id == productId }
+        if (index != -1) {
+            currentList[index] = currentList[index].copy(isReturn = !currentList[index].isReturn)
+            _cartItems.value = currentList
+            recalculateTotal()
+        }
+    }
+
+    fun setCartItemDiscount(productId: String, discountPercent: Double) {
+        val currentList = _cartItems.value.toMutableList()
+        val index = currentList.indexOfFirst { it.product.id == productId }
+        if (index != -1) {
+            currentList[index] = currentList[index].copy(discountPercent = discountPercent.coerceIn(0.0, 100.0))
+            _cartItems.value = currentList
+            recalculateTotal()
+        }
+    }
+
     fun clearCart() {
         _cartItems.value = emptyList()
         _cartDiscountPercent.value = 0.0

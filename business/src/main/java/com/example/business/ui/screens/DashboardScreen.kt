@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,7 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.business.data.model.*
 import com.example.business.ui.BusinessViewModel
+import com.example.business.ui.components.ExecutiveHeroBanner
+import com.example.business.ui.components.MonthlyTargetTrackerCard
+import com.example.business.ui.components.WeeklyTrendChartCard
 import com.example.business.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,7 +49,10 @@ fun DashboardScreen(
     val smartInsights by viewModel.smartInsights.collectAsState()
     val topProducts by viewModel.topProducts.collectAsState()
     val warehouseSummary by viewModel.warehouseSummary.collectAsState()
+    val monthlyTarget by viewModel.monthlyRevenueTarget.collectAsState()
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isRefreshing by remember { mutableStateOf(false) }
 
     // Real dynamic business health calculations
     val realMargin = if (summary.monthSales > 0) (summary.monthProfit / summary.monthSales * 100.0).coerceIn(0.0, 100.0) else 0.0
@@ -134,16 +143,55 @@ fun DashboardScreen(
         },
         modifier = modifier
     ) { innerPadding ->
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                viewModel.refreshData()
+                coroutineScope.launch {
+                    delay(700)
+                    isRefreshing = false
+                    Toast.makeText(context, "Məlumatlar ERP-dən yeniləndi", Toast.LENGTH_SHORT).show()
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item { Spacer(modifier = Modifier.height(4.dp)) }
 
-            // 1. TOP CARDS (Sales & Purchases)
+                // 0. EXECUTIVE HERO BANNER WITH QUICK ACTIONS
+                item {
+                    ExecutiveHeroBanner(
+                        summary = summary,
+                        onQuickReports = onNavigateToReports,
+                        onQuickDebtors = onNavigateToDebtors,
+                        onQuickWarehouse = onNavigateToSuppliers,
+                        onQuickChat = onNavigateToChat
+                    )
+                }
+
+                // 0.5 MONTHLY TARGET TRACKER
+                item {
+                    MonthlyTargetTrackerCard(
+                        currentSales = summary.monthSales,
+                        monthlyTarget = monthlyTarget,
+                        onUpdateTarget = { viewModel.updateMonthlyRevenueTarget(it) }
+                    )
+                }
+
+                // 0.75 7-DAY INTERACTIVE TREND CHART
+                item {
+                    WeeklyTrendChartCard(summary = summary)
+                }
+
+                // 1. TOP CARDS (Sales & Purchases)
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -794,6 +842,7 @@ fun DashboardScreen(
             }
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
+            }
         }
     }
 }

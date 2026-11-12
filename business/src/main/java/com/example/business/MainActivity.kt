@@ -58,9 +58,12 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        // Check for updates from GitHub in background
+        // Check for updates from D1 / GitHub in background
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            com.example.business.util.AppUpdateManager.checkForUpdates(forceSilent = true)
+            com.example.business.util.AppUpdateManager.checkForUpdates(
+                forceSilent = true,
+                context = applicationContext
+            )
         }
 
         setContent {

@@ -1,14 +1,23 @@
 package com.example.business.util
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.example.business.BuildConfig
+import com.example.business.MainActivity
+import com.example.business.data.api.D1ApiClient
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
@@ -16,8 +25,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -46,6 +57,9 @@ sealed class UpdateStatus {
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
     private const val UPDATES_MANIFEST_URL = "https://raw.githubusercontent.com/rbagrv/emanapps/main/app_updates.json"
+    private const val D1_QUERY_URL = "https://api.cloudflare.com/client/v4/accounts/${D1ApiClient.CF_ACCOUNT_ID}/d1/database/${D1ApiClient.CF_D1_DATABASE_ID}/query"
+    private const val UPDATE_CHANNEL_ID = "emanager_business_updates"
+    private const val UPDATE_NOTIFICATION_ID = 9002
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -59,56 +73,125 @@ object AppUpdateManager {
     private val _updateStatus = MutableStateFlow<UpdateStatus>(UpdateStatus.Idle)
     val updateStatus: StateFlow<UpdateStatus> = _updateStatus.asStateFlow()
 
-    suspend fun checkForUpdates(forceSilent: Boolean = false): UpdateStatus {
+    private fun fetchFromD1(): AppUpdateInfo? {
+        return try {
+            val payload = """{"sql":"SELECT version_code, version_name, apk_name, download_url, release_notes, force_update FROM app_updates WHERE id = 'business' LIMIT 1"}"""
+                .toRequestBody("application/json".toMediaType())
+            val req = Request.Builder()
+                .url(D1_QUERY_URL)
+                .header("Authorization", D1ApiClient.CF_AUTH_HEADER)
+                .post(payload)
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            if (!resp.isSuccessful) return null
+            val bodyStr = resp.body?.string() ?: return null
+            val root = gson.fromJson(bodyStr, JsonObject::class.java)
+            val rows = root?.getAsJsonArray("result")?.firstOrNull()?.asJsonObject?.getAsJsonArray("results")
+            val row = rows?.firstOrNull()?.asJsonObject ?: return null
+            AppUpdateInfo(
+                appType = "business",
+                newVersionCode = row.get("version_code")?.asInt ?: 0,
+                newVersionName = row.get("version_name")?.asString ?: "",
+                apkName = row.get("apk_name")?.asString ?: "e-Manager_Sahibkar_latest.apk",
+                downloadUrl = row.get("download_url")?.asString ?: "",
+                releaseNotes = row.get("release_notes")?.asString ?: "Tətbiq üçün yeni versiya mövcuddur.",
+                forceUpdate = (row.get("force_update")?.asInt ?: 0) == 1
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "D1 update check fallback to GitHub: ${e.message}")
+            null
+        }
+    }
+
+    private fun fetchFromGitHub(): AppUpdateInfo? {
+        val request = Request.Builder()
+            .url("$UPDATES_MANIFEST_URL?nocache=${System.currentTimeMillis()}")
+            .header("Cache-Control", "no-cache")
+            .build()
+        val response = httpClient.newCall(request).execute()
+        if (!response.isSuccessful) return null
+        val bodyStr = response.body?.string() ?: return null
+        val rootJson = gson.fromJson(bodyStr, JsonObject::class.java)
+        val businessJson = rootJson?.getAsJsonObject("business") ?: return null
+        return AppUpdateInfo(
+            appType = "business",
+            newVersionCode = businessJson.get("versionCode")?.asInt ?: 0,
+            newVersionName = businessJson.get("versionName")?.asString ?: "",
+            apkName = businessJson.get("apkName")?.asString ?: "e-Manager_Sahibkar_latest.apk",
+            downloadUrl = businessJson.get("downloadUrl")?.asString ?: "",
+            releaseNotes = businessJson.get("releaseNotes")?.asString ?: "Tətbiq üçün yeni versiya mövcuddur.",
+            forceUpdate = businessJson.get("forceUpdate")?.asBoolean ?: false
+        )
+    }
+
+    private fun showUpdateNotification(context: Context, info: AppUpdateInfo) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    UPDATE_CHANNEL_ID,
+                    "Proqram Yenilənmələri",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "e-Manager Sahibkar yeni versiya bildirişləri"
+                }
+                nm.createNotificationChannel(channel)
+            }
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(context, UPDATE_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("🚀 Yeni e-Manager Sahibkar v${info.newVersionName}")
+                .setContentText(info.releaseNotes)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(info.releaseNotes))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+            nm.notify(UPDATE_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to post update notification: ${e.message}")
+        }
+    }
+
+    suspend fun checkForUpdates(forceSilent: Boolean = false, context: Context? = null): UpdateStatus {
         return withContext(Dispatchers.IO) {
             try {
                 if (!forceSilent) {
                     _updateStatus.value = UpdateStatus.Checking
                 }
 
-                val request = Request.Builder()
-                    .url("$UPDATES_MANIFEST_URL?nocache=${System.currentTimeMillis()}")
-                    .header("Cache-Control", "no-cache")
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    val status = UpdateStatus.Error("Yenilənmə serverinə qoşulmaq mümkün olmadı (HTTP ${response.code})")
+                val info = fetchFromD1() ?: fetchFromGitHub()
+                if (info == null) {
+                    val status = UpdateStatus.Error("Yenilənmə serverinə qoşulmaq mümkün olmadı")
                     if (!forceSilent) _updateStatus.value = status
                     return@withContext status
                 }
 
-                val bodyStr = response.body?.string() ?: ""
-                val rootJson = gson.fromJson(bodyStr, JsonObject::class.java)
-                val businessJson = rootJson.getAsJsonObject("business")
+                val currentVersionCode = BuildConfig.VERSION_CODE
+                val currentVersionName = BuildConfig.VERSION_NAME
 
-                if (businessJson != null) {
-                    val remoteVersionCode = businessJson.get("versionCode")?.asInt ?: 0
-                    val remoteVersionName = businessJson.get("versionName")?.asString ?: ""
-                    val apkName = businessJson.get("apkName")?.asString ?: "e-Manager_Sahibkar_latest.apk"
-                    val downloadUrl = businessJson.get("downloadUrl")?.asString ?: ""
-                    val releaseNotes = businessJson.get("releaseNotes")?.asString ?: "Tətbiq üçün yeni versiya mövcuddur."
-                    val forceUpdate = businessJson.get("forceUpdate")?.asBoolean ?: false
+                Log.d(TAG, "Update check - Current: $currentVersionCode (v$currentVersionName), Remote: ${info.newVersionCode} (v${info.newVersionName})")
 
-                    val currentVersionCode = BuildConfig.VERSION_CODE
-                    val currentVersionName = BuildConfig.VERSION_NAME
-
-                    Log.d(TAG, "Update check - Current: $currentVersionCode (v$currentVersionName), Remote: $remoteVersionCode (v$remoteVersionName)")
-
-                    if (remoteVersionCode > currentVersionCode || (remoteVersionName != currentVersionName && remoteVersionCode >= currentVersionCode)) {
-                        val info = AppUpdateInfo(
-                            appType = "business",
-                            newVersionCode = remoteVersionCode,
-                            newVersionName = remoteVersionName,
-                            apkName = apkName,
-                            downloadUrl = downloadUrl,
-                            releaseNotes = releaseNotes,
-                            forceUpdate = forceUpdate
-                        )
-                        val status = UpdateStatus.Available(info)
-                        _updateStatus.value = status
-                        return@withContext status
-                    }
+                if (info.newVersionCode > currentVersionCode ||
+                    (info.newVersionName != currentVersionName && info.newVersionCode >= currentVersionCode)
+                ) {
+                    context?.let { showUpdateNotification(it, info) }
+                    val status = UpdateStatus.Available(info)
+                    _updateStatus.value = status
+                    return@withContext status
                 }
 
                 val upToDate = UpdateStatus.UpToDate

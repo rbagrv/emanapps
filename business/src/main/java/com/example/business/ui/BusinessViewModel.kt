@@ -749,4 +749,15 @@ class BusinessViewModel(
     fun setThemeMode(mode: ThemeMode) {
         _themeMode.value = mode
     }
+
+    private val _monthlyRevenueTarget = MutableStateFlow(
+        prefs.getFloat("monthly_revenue_target", 50000f).toDouble()
+    )
+    val monthlyRevenueTarget: StateFlow<Double> = _monthlyRevenueTarget.asStateFlow()
+
+    fun updateMonthlyRevenueTarget(target: Double) {
+        val safeTarget = target.coerceAtLeast(1000.0)
+        _monthlyRevenueTarget.value = safeTarget
+        prefs.edit().putFloat("monthly_revenue_target", safeTarget.toFloat()).apply()
+    }
 }

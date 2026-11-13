@@ -1,18 +1,18 @@
 {
   "pos": {
-    "versionCode": 34,
-    "versionName": "1.34",
-    "apkName": "e-Manager_POS_v1.34.apk",
-    "downloadUrl": "https://github.com/rbagrv/emanapps/raw/main/APK_FAYLLARI/e-Manager_POS_v1.34.apk",
+    "versionCode": 35,
+    "versionName": "1.35",
+    "apkName": "e-Manager_POS_v1.35.apk",
+    "downloadUrl": "https://raw.githubusercontent.com/rbagrv/emanapps/main/APK_FAYLLARI/e-Manager_POS_v1.35.apk",
     "releaseNotes": "POS Kassa üçün yeni versiya, təkmilləşdirilmiş çap və avtomatik yenilənmə sistemi.",
     "forceUpdate": false
   },
   "business": {
-    "versionCode": 37,
-    "versionName": "1.36",
-    "apkName": "e-Manager_Sahibkar_v1.36.apk",
-    "downloadUrl": "https://github.com/rbagrv/emanapps/raw/main/APK_FAYLLARI/e-Manager_Sahibkar_v1.36.apk",
-    "releaseNotes": "e-manager.az ERP canlı qoşulma, Balans və MZH hesabatları, bank və kassa hesabları qalıqları.",
+    "versionCode": 38,
+    "versionName": "1.37",
+    "apkName": "e-Manager_Sahibkar_v1.37.apk",
+    "downloadUrl": "https://raw.githubusercontent.com/rbagrv/emanapps/main/APK_FAYLLARI/e-Manager_Sahibkar_v1.37.apk",
+    "releaseNotes": "Malların tam hərəkətləri hesabatı, 100% müşahidə rejimi, arxa plan spam bildirişlərinin dayandırılması və avtomatik yenilənmə düzəlişi.",
     "forceUpdate": false
   }
 }

@@ -34,7 +34,7 @@ import java.util.Locale
 @Composable
 fun SuppliersScreen(
     viewModel: BusinessViewModel,
-    onNavigateToAddSupplier: () -> Unit,
+    onNavigateToAddSupplier: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val suppliers by viewModel.filteredSuppliers.collectAsState()
@@ -42,7 +42,6 @@ fun SuppliersScreen(
     val summary by viewModel.summary.collectAsState()
     val context = LocalContext.current
 
-    var selectedSupplierForPayment by remember { mutableStateOf<Supplier?>(null) }
     var selectedSupplierForDetails by remember { mutableStateOf<Supplier?>(null) }
     var selectedSupplierForDebtOrigin by remember { mutableStateOf<Supplier?>(null) }
     var sortOrder by remember { mutableStateOf("debt_desc") }
@@ -59,31 +58,21 @@ fun SuppliersScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Təchizatçılar (Kreditorlar)",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToAddSupplier) {
-                        Icon(
-                            imageVector = Icons.Default.AddBusiness,
-                            contentDescription = "Yeni Təchizatçı Səhifəsi",
-                            tint = EmeraldPrimary
+                    Column {
+                        Text(
+                            text = "Təchizatçılar (Kreditorlar)",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Canlı ERP Müşahidə və Nəzarət",
+                            fontSize = 11.sp,
+                            color = EmeraldPrimary,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNavigateToAddSupplier,
-                containerColor = EmeraldPrimary,
-                contentColor = Color.White
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Yeni Təchizatçı")
-            }
         },
         modifier = modifier
     ) { innerPadding ->
@@ -216,7 +205,7 @@ fun SuppliersScreen(
                             supplier = supplier,
                             onCardClick = { selectedSupplierForDetails = supplier },
                             onDebtClick = { selectedSupplierForDebtOrigin = supplier },
-                            onPayClick = { selectedSupplierForPayment = supplier },
+                            onDetailsClick = { selectedSupplierForDetails = supplier },
                             onCallClick = {
                                 val intent = Intent(Intent.ACTION_DIAL).apply {
                                     data = Uri.parse("tel:${supplier.phone}")
@@ -229,69 +218,6 @@ fun SuppliersScreen(
                 }
             }
         }
-    }
-
-    // PAYMENT DIALOG
-    selectedSupplierForPayment?.let { supplier ->
-        var payAmount by remember { mutableStateOf("") }
-        var payNote by remember { mutableStateOf("Bank köçürməsi") }
-
-        AlertDialog(
-            onDismissRequest = { selectedSupplierForPayment = null },
-            title = {
-                Text(
-                    text = "Təchizatçıya Ödəniş Köçür",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = supplier.companyName, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = "Cari borc: ₼ ${String.format(Locale.US, "%,.2f", supplier.totalPayable)}",
-                        color = WarningOrange,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    OutlinedTextField(
-                        value = payAmount,
-                        onValueChange = { payAmount = it },
-                        label = { Text("Ödənilən Məbləğ (₼)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = payNote,
-                        onValueChange = { payNote = it },
-                        label = { Text("Qeyd / Təyinat") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val amount = payAmount.toDoubleOrNull()
-                        if (amount != null && amount > 0) {
-                            viewModel.recordSupplierPayment(supplier.id, amount, payNote)
-                            selectedSupplierForPayment = null
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-                ) {
-                    Text("Təsdiq Et")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedSupplierForPayment = null }) {
-                    Text("Ləğv et")
-                }
-            }
-        )
     }
 
     // SUPPLIER DEBT ORIGIN DIALOG
@@ -399,7 +325,7 @@ fun SupplierCard(
     supplier: Supplier,
     onCardClick: () -> Unit,
     onDebtClick: () -> Unit,
-    onPayClick: () -> Unit,
+    onDetailsClick: () -> Unit,
     onCallClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -532,16 +458,15 @@ fun SupplierCard(
                     }
                 }
 
-                Button(
-                    onClick = onPayClick,
+                OutlinedButton(
+                    onClick = onDetailsClick,
                     shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
-                    Icon(Icons.Default.Payment, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp), tint = EmeraldPrimary)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Ödəniş Et", fontSize = 12.sp)
+                    Text("Detallar", fontSize = 12.sp, color = EmeraldPrimary, fontWeight = FontWeight.Bold)
                 }
             }
         }

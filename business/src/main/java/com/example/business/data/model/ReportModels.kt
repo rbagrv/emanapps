@@ -9,10 +9,31 @@ enum class ReportPeriod(val title: String) {
 
 enum class ReportType(val title: String, val shortName: String) {
     TURNOVER("Dövriyyə", "Dövriyyə"),
+    STOCK_MOVEMENT("Malların Tam Hərəkəti", "Mal Hərəkəti"),
     MZH("Mənfəət və Zərər (MZH)", "MZH"),
     BALANCE("Balans Hesabatı", "Balans"),
     CASH_FLOW("Cash Flow (Pul Axını)", "Cash Flow"),
     TAX("Vergi Borcları & Öhdəliklər", "Vergilər")
+}
+
+data class StockMovement(
+    val id: String,
+    val date: String,
+    val productName: String,
+    val movementType: StockMovementType,
+    val quantity: Double,
+    val unit: String,
+    val unitPrice: Double,
+    val totalPrice: Double,
+    val documentNumber: String,
+    val partnerOrChannel: String
+)
+
+enum class StockMovementType(val title: String, val badgeColorHex: Long) {
+    PURCHASE("Alış (Qəbul)", 0xFF10B981),
+    SALE("Satış", 0xFF3B82F6),
+    RETURN("İadə", 0xFFF59E0B),
+    WRITE_OFF("Silinmə", 0xFFEF4444)
 }
 
 data class CashierPerformance(

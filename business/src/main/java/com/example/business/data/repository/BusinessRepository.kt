@@ -3,6 +3,7 @@ package com.example.business.data.repository
 import android.util.Log
 import com.example.business.data.model.*
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -43,6 +44,14 @@ class BusinessRepository {
 
     private val _warehouseSummary = MutableStateFlow(initialWarehouseSummary)
     val warehouseSummary: StateFlow<WarehouseSummary> = _warehouseSummary.asStateFlow()
+
+    private val _stockMovements = MutableStateFlow<List<StockMovement>>(emptyList())
+    val stockMovements: StateFlow<List<StockMovement>> = _stockMovements.asStateFlow()
+
+    private var initialInvoicesLoaded = false
+    private var initialPurchasesLoaded = false
+    private var initialPosLoaded = false
+    private val d1StockMovementsCache = mutableListOf<StockMovement>()
 
     private val _channels = MutableStateFlow<List<ChatChannel>>(createDefaultChannels())
     val channels: StateFlow<List<ChatChannel>> = _channels.asStateFlow()
@@ -175,13 +184,18 @@ class BusinessRepository {
         realPosTransactions.clear()
         d1PosSalesCache = emptyList()
         d1TopProductsCache = emptyList()
+        d1StockMovementsCache.clear()
         customerDebtFromPos.clear()
         lastCustomersDocs = emptyList()
         lastMobilePosCustomersDocs = emptyList()
+        initialInvoicesLoaded = false
+        initialPurchasesLoaded = false
+        initialPosLoaded = false
 
         _debtors.value = emptyList()
         _suppliers.value = emptyList()
         _warehouseItems.value = emptyList()
+        _stockMovements.value = emptyList()
         _warehouseSummary.value = WarehouseSummary(0, 0.0, 0.0, 0.0, 0)
         _summary.value = BusinessSummary(companyName = tenantName)
 
@@ -398,12 +412,32 @@ class BusinessRepository {
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
+                    if (initialInvoicesLoaded) {
+                        for (dc in snapshot.documentChanges) {
+                            if (dc.type == DocumentChange.Type.ADDED) {
+                                val num = dc.document.getString("invoiceNumber") ?: dc.document.id
+                                val amt = dc.document.safeDouble("totalAmount", 0.0)
+                                val cust = dc.document.getString("customerName") ?: "Müştəri"
+                                com.example.business.BusinessApp.instance?.let { ctx ->
+                                    com.example.business.util.NotificationHelper.showNotification(
+                                        context = ctx,
+                                        title = "📄 Yeni Satış Qaiməsi (#$num)",
+                                        message = "$cust: ₼${String.format(Locale.US, "%.2f", amt)}"
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        initialInvoicesLoaded = true
+                    }
+
                     realInvoices.clear()
                     for (doc in snapshot.documents) {
                         val data = doc.data ?: continue
                         realInvoices.add(data)
                     }
                     recalculateAnalytics()
+                    recalculateStockMovements()
                 }
             }
 
@@ -420,12 +454,32 @@ class BusinessRepository {
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
+                    if (initialPurchasesLoaded) {
+                        for (dc in snapshot.documentChanges) {
+                            if (dc.type == DocumentChange.Type.ADDED) {
+                                val num = dc.document.getString("purchaseNumber") ?: dc.document.getString("invoiceNumber") ?: dc.document.id
+                                val amt = dc.document.safeDouble("totalAmount", 0.0)
+                                val sup = dc.document.getString("supplierName") ?: "Təchizatçı"
+                                com.example.business.BusinessApp.instance?.let { ctx ->
+                                    com.example.business.util.NotificationHelper.showNotification(
+                                        context = ctx,
+                                        title = "📥 Yeni Alış Əməliyyatı (#$num)",
+                                        message = "$sup: ₼${String.format(Locale.US, "%.2f", amt)}"
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        initialPurchasesLoaded = true
+                    }
+
                     realPurchases.clear()
                     for (doc in snapshot.documents) {
                         val data = doc.data ?: continue
                         realPurchases.add(data)
                     }
                     recalculateAnalytics()
+                    recalculateStockMovements()
                 }
             }
 
@@ -438,6 +492,25 @@ class BusinessRepository {
             .limit(300)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
+                    if (initialPosLoaded) {
+                        for (dc in snapshot.documentChanges) {
+                            if (dc.type == DocumentChange.Type.ADDED) {
+                                val pType = dc.document.getString("type") ?: "sale"
+                                val amt = dc.document.safeDouble("totalAmount", 0.0)
+                                val title = if (pType == "expense") "💸 Yeni Kassa Məxarici" else "🛒 Yeni POS Satışı"
+                                com.example.business.BusinessApp.instance?.let { ctx ->
+                                    com.example.business.util.NotificationHelper.showNotification(
+                                        context = ctx,
+                                        title = title,
+                                        message = "Məbləğ: ₼${String.format(Locale.US, "%.2f", amt)}"
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        initialPosLoaded = true
+                    }
+
                     realPosTransactions.clear()
                     customerDebtFromPos.clear()
 
@@ -456,6 +529,7 @@ class BusinessRepository {
                     }
                     recalculateAnalytics()
                     recalculateDebtors()
+                    recalculateStockMovements()
                 }
             }
 
@@ -848,10 +922,233 @@ class BusinessRepository {
                     }
                 }
 
+                // 7. Query Stock Movements from D1 pos_sale_items
+                val stockMovementsSql = """
+                    SELECT 
+                        psi.id,
+                        ps.cheque_date as date,
+                        psi.raw_name as product_name,
+                        psi.quantity,
+                        psi.unit_price,
+                        psi.total_sum,
+                        ps.id as doc_no
+                    FROM pos_sale_items psi
+                    INNER JOIN pos_sales ps ON psi.sale_id = ps.id
+                    WHERE ps.tenant_id = ?
+                    ORDER BY ps.cheque_date DESC 
+                    LIMIT 100
+                """.trimIndent()
+
+                val smResp = com.example.business.data.api.D1ApiClient.cfDirectService.queryRaw(
+                    accountId = com.example.business.data.api.D1ApiClient.CF_ACCOUNT_ID,
+                    databaseId = com.example.business.data.api.D1ApiClient.CF_D1_DATABASE_ID,
+                    authHeader = com.example.business.data.api.D1ApiClient.CF_AUTH_HEADER,
+                    body = com.example.business.data.api.D1SqlQueryRequest(
+                        sql = stockMovementsSql,
+                        params = listOf(tenantId)
+                    )
+                )
+
+                if (smResp.isSuccessful) {
+                    val root = smResp.body()
+                    val resultArr = root?.getAsJsonArray("result")
+                    if (resultArr != null && resultArr.size() > 0) {
+                        val resultsObj = resultArr.get(0).asJsonObject
+                        val rows = resultsObj.getAsJsonArray("results")
+                        if (rows != null && rows.size() > 0) {
+                            val d1Movements = mutableListOf<StockMovement>()
+                            for (i in 0 until rows.size()) {
+                                val r = rows.get(i).asJsonObject
+                                val smId = r.get("id")?.takeIf { !it.isJsonNull }?.asString ?: "sm_$i"
+                                val dt = r.get("date")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                                val pName = r.get("product_name")?.takeIf { !it.isJsonNull }?.asString ?: "Məhsul"
+                                val qty = r.get("quantity")?.takeIf { !it.isJsonNull }?.asDouble ?: 1.0
+                                val uPrice = r.get("unit_price")?.takeIf { !it.isJsonNull }?.asDouble ?: 0.0
+                                val tSum = r.get("total_sum")?.takeIf { !it.isJsonNull }?.asDouble ?: 0.0
+                                val docNo = r.get("doc_no")?.takeIf { !it.isJsonNull }?.asString ?: "POS Çek"
+                                val cleanDate = if (dt.length >= 10) dt.substring(0, 10) else dt
+
+                                d1Movements.add(
+                                    StockMovement(
+                                        id = smId,
+                                        date = cleanDate,
+                                        productName = pName,
+                                        movementType = StockMovementType.SALE,
+                                        quantity = qty,
+                                        unit = "ədəd",
+                                        unitPrice = uPrice,
+                                        totalPrice = tSum,
+                                        documentNumber = docNo,
+                                        partnerOrChannel = "POS Kassa"
+                                    )
+                                )
+                            }
+                            d1StockMovementsCache.clear()
+                            d1StockMovementsCache.addAll(d1Movements)
+                            recalculateStockMovements()
+                            Log.d("BusinessRepo", "Synced ${d1Movements.size} stock movements from D1")
+                        }
+                    }
+                }
+
             } catch (e: Exception) {
                 Log.e("BusinessRepo", "Error syncing with Cloudflare D1: ${e.message}", e)
             }
         }
+    }
+
+    private fun recalculateStockMovements() {
+        val list = mutableListOf<StockMovement>()
+
+        // 1. D1 POS Movements
+        list.addAll(d1StockMovementsCache)
+
+        // 2. Real Purchases (Alışlar)
+        for (pur in realPurchases) {
+            val pId = (pur["id"] as? String) ?: UUID.randomUUID().toString()
+            val pNum = (pur["purchaseNumber"] as? String) ?: (pur["invoiceNumber"] as? String) ?: "Alış Sənədi"
+            val sup = (pur["supplierName"] as? String) ?: "Təchizatçı"
+            val dateStr = (pur["issueDate"] as? String) ?: (pur["date"] as? String) ?: ""
+            val totalAmt = (pur["totalAmount"] as? Number)?.toDouble() ?: 0.0
+
+            val items = pur["items"] as? List<*>
+            if (items != null && items.isNotEmpty()) {
+                for ((idx, itemObj) in items.withIndex()) {
+                    val map = itemObj as? Map<*, *> ?: continue
+                    val itemName = (map["productName"] as? String) ?: (map["name"] as? String) ?: "Məhsul"
+                    val qty = (map["quantity"] as? Number)?.toDouble() ?: 1.0
+                    val price = (map["unitPrice"] as? Number)?.toDouble() ?: (map["price"] as? Number)?.toDouble() ?: 0.0
+                    val total = (map["total"] as? Number)?.toDouble() ?: (qty * price)
+                    val unit = (map["unit"] as? String) ?: "ədəd"
+
+                    list.add(
+                        StockMovement(
+                            id = "${pId}_$idx",
+                            date = dateStr,
+                            productName = itemName,
+                            movementType = StockMovementType.PURCHASE,
+                            quantity = qty,
+                            unit = unit,
+                            unitPrice = price,
+                            totalPrice = total,
+                            documentNumber = pNum,
+                            partnerOrChannel = sup
+                        )
+                    )
+                }
+            } else {
+                list.add(
+                    StockMovement(
+                        id = pId,
+                        date = dateStr,
+                        productName = "Alış Qaiməsi: $sup",
+                        movementType = StockMovementType.PURCHASE,
+                        quantity = 1.0,
+                        unit = "partiya",
+                        unitPrice = totalAmt,
+                        totalPrice = totalAmt,
+                        documentNumber = pNum,
+                        partnerOrChannel = sup
+                    )
+                )
+            }
+        }
+
+        // 3. Real Invoices (Satış Qaimələri)
+        for (inv in realInvoices) {
+            val invId = (inv["id"] as? String) ?: UUID.randomUUID().toString()
+            val invNum = (inv["invoiceNumber"] as? String) ?: "Satış Qaiməsi"
+            val cust = (inv["customerName"] as? String) ?: "Müştəri"
+            val dateStr = (inv["issueDate"] as? String) ?: (inv["date"] as? String) ?: ""
+            val totalAmt = (inv["totalAmount"] as? Number)?.toDouble() ?: 0.0
+
+            val items = inv["items"] as? List<*>
+            if (items != null && items.isNotEmpty()) {
+                for ((idx, itemObj) in items.withIndex()) {
+                    val map = itemObj as? Map<*, *> ?: continue
+                    val itemName = (map["productName"] as? String) ?: (map["name"] as? String) ?: "Məhsul"
+                    val qty = (map["quantity"] as? Number)?.toDouble() ?: 1.0
+                    val price = (map["unitPrice"] as? Number)?.toDouble() ?: 0.0
+                    val total = (map["total"] as? Number)?.toDouble() ?: (qty * price)
+                    val unit = (map["unit"] as? String) ?: "ədəd"
+
+                    list.add(
+                        StockMovement(
+                            id = "${invId}_$idx",
+                            date = dateStr,
+                            productName = itemName,
+                            movementType = StockMovementType.SALE,
+                            quantity = qty,
+                            unit = unit,
+                            unitPrice = price,
+                            totalPrice = total,
+                            documentNumber = invNum,
+                            partnerOrChannel = cust
+                        )
+                    )
+                }
+            } else {
+                list.add(
+                    StockMovement(
+                        id = invId,
+                        date = dateStr,
+                        productName = "Satış: $cust",
+                        movementType = StockMovementType.SALE,
+                        quantity = 1.0,
+                        unit = "ədəd",
+                        unitPrice = totalAmt,
+                        totalPrice = totalAmt,
+                        documentNumber = invNum,
+                        partnerOrChannel = cust
+                    )
+                )
+            }
+        }
+
+        // 4. Real POS Transactions
+        for (tx in realPosTransactions) {
+            val txId = (tx["id"] as? String) ?: UUID.randomUUID().toString()
+            val typeStr = (tx["type"] as? String) ?: "sale"
+            val receiptNo = (tx["receiptNo"] as? String) ?: (tx["invoiceNo"] as? String) ?: "POS Satış"
+            val cName = (tx["cashierName"] as? String) ?: "POS Kassa"
+            val totalAmt = (tx["totalAmount"] as? Number)?.toDouble() ?: 0.0
+            val timestamp = (tx["timestamp"] as? Number)?.toLong() ?: 0L
+            val dateStr = if (timestamp > 0) SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(timestamp)) else ""
+
+            val mType = if (typeStr == "purchase") StockMovementType.PURCHASE
+            else if (typeStr == "return") StockMovementType.RETURN
+            else StockMovementType.SALE
+
+            val items = tx["items"] as? List<*>
+            if (items != null && items.isNotEmpty()) {
+                for ((idx, itemObj) in items.withIndex()) {
+                    val map = itemObj as? Map<*, *> ?: continue
+                    val itemName = (map["name"] as? String) ?: (map["productName"] as? String) ?: "Məhsul"
+                    val qty = (map["quantity"] as? Number)?.toDouble() ?: 1.0
+                    val price = (map["price"] as? Number)?.toDouble() ?: (map["unitPrice"] as? Number)?.toDouble() ?: 0.0
+                    val total = (map["total"] as? Number)?.toDouble() ?: (qty * price)
+                    val unit = (map["unit"] as? String) ?: "ədəd"
+
+                    list.add(
+                        StockMovement(
+                            id = "${txId}_$idx",
+                            date = dateStr,
+                            productName = itemName,
+                            movementType = mType,
+                            quantity = qty,
+                            unit = unit,
+                            unitPrice = price,
+                            totalPrice = total,
+                            documentNumber = receiptNo,
+                            partnerOrChannel = cName
+                        )
+                    )
+                }
+            }
+        }
+
+        // Distinct by id, sort by date descending
+        _stockMovements.value = list.distinctBy { it.id }.sortedByDescending { it.date }
     }
 
     private fun recalculateDebtors() {

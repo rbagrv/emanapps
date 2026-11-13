@@ -20,8 +20,8 @@ enum class PartnerTypeTab {
 @Composable
 fun PartnersScreen(
     viewModel: BusinessViewModel,
-    onNavigateToAddDebtor: () -> Unit,
-    onNavigateToAddSupplier: () -> Unit,
+    onNavigateToAddDebtor: () -> Unit = {},
+    onNavigateToAddSupplier: () -> Unit = {},
     initialTab: PartnerTypeTab = PartnerTypeTab.DEBTORS,
     modifier: Modifier = Modifier
 ) {

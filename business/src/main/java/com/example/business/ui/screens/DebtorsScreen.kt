@@ -36,7 +36,7 @@ import java.util.Locale
 @Composable
 fun DebtorsScreen(
     viewModel: BusinessViewModel,
-    onNavigateToAddDebtor: () -> Unit,
+    onNavigateToAddDebtor: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val debtors by viewModel.filteredDebtors.collectAsState()
@@ -45,7 +45,6 @@ fun DebtorsScreen(
     val summary by viewModel.summary.collectAsState()
     val context = LocalContext.current
 
-    var selectedDebtorForPayment by remember { mutableStateOf<Debtor?>(null) }
     var selectedDebtorForDetails by remember { mutableStateOf<Debtor?>(null) }
     var selectedDebtorForDebtOrigin by remember { mutableStateOf<Debtor?>(null) }
     var sortOrder by remember { mutableStateOf("debt_desc") }
@@ -63,31 +62,21 @@ fun DebtorsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Debitorlar (Müştəri Borcları)",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToAddDebtor) {
-                        Icon(
-                            imageVector = Icons.Default.PersonAdd,
-                            contentDescription = "Yeni Debitor Səhifəsi",
-                            tint = EmeraldPrimary
+                    Column {
+                        Text(
+                            text = "Debitorlar (Müştəri Borcları)",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Canlı ERP Müşahidə və Nəzarət",
+                            fontSize = 11.sp,
+                            color = EmeraldPrimary,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNavigateToAddDebtor,
-                containerColor = EmeraldPrimary,
-                contentColor = Color.White
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Yeni Debitor")
-            }
         },
         modifier = modifier
     ) { innerPadding ->
@@ -241,7 +230,7 @@ fun DebtorsScreen(
                             debtor = debtor,
                             onCardClick = { selectedDebtorForDetails = debtor },
                             onDebtClick = { selectedDebtorForDebtOrigin = debtor },
-                            onPayClick = { selectedDebtorForPayment = debtor },
+                            onDetailsClick = { selectedDebtorForDetails = debtor },
                             onCallClick = {
                                 val intent = Intent(Intent.ACTION_DIAL).apply {
                                     data = Uri.parse("tel:${debtor.phone}")
@@ -254,71 +243,6 @@ fun DebtorsScreen(
                 }
             }
         }
-    }
-
-    // PAYMENT DIALOG
-    selectedDebtorForPayment?.let { debtor ->
-        var payAmount by remember { mutableStateOf("") }
-        var payType by remember { mutableStateOf("Nağd") }
-
-        AlertDialog(
-            onDismissRequest = { selectedDebtorForPayment = null },
-            title = {
-                Text(
-                    text = "Borc Ödənişini Qəbul Et",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = debtor.fullName, fontWeight = FontWeight.Bold)
-                    Text(
-                        text = "Qalıq borc: ₼ ${String.format(Locale.US, "%,.2f", debtor.totalDebt)}",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    OutlinedTextField(
-                        value = payAmount,
-                        onValueChange = { payAmount = it },
-                        label = { Text("Ödənilən Məbləğ (₼)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Nağd", "Kart", "Köçürmə").forEach { type ->
-                            FilterChip(
-                                selected = payType == type,
-                                onClick = { payType = type },
-                                label = { Text(type) }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val amount = payAmount.toDoubleOrNull()
-                        if (amount != null && amount > 0) {
-                            viewModel.recordDebtorPayment(debtor.id, amount, payType)
-                            selectedDebtorForPayment = null
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-                ) {
-                    Text("Təsdiq Et")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedDebtorForPayment = null }) {
-                    Text("Ləğv et")
-                }
-            }
-        )
     }
 
     // DEBT ORIGIN DATE DIALOG
@@ -436,7 +360,7 @@ fun DebtorCard(
     debtor: Debtor,
     onCardClick: () -> Unit,
     onDebtClick: () -> Unit,
-    onPayClick: () -> Unit,
+    onDetailsClick: () -> Unit,
     onCallClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -567,16 +491,15 @@ fun DebtorCard(
                     }
                 }
 
-                Button(
-                    onClick = onPayClick,
+                OutlinedButton(
+                    onClick = onDetailsClick,
                     shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
-                    Icon(Icons.Default.Payment, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp), tint = EmeraldPrimary)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Ödəniş Al", fontSize = 12.sp)
+                    Text("Detallar", fontSize = 12.sp, color = EmeraldPrimary, fontWeight = FontWeight.Bold)
                 }
             }
         }

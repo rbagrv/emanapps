@@ -32,9 +32,6 @@ import com.example.business.util.NotificationHelper
 
 enum class ActiveScreen {
     MAIN_TABS,
-    ADD_PRODUCT,
-    ADD_DEBTOR,
-    ADD_SUPPLIER,
     SETTINGS
 }
 
@@ -116,24 +113,6 @@ fun BusinessAppRoot(viewModel: BusinessViewModel) {
         }
         BusinessAppStage.MAIN -> {
             when (activeSubScreen) {
-                ActiveScreen.ADD_PRODUCT -> {
-                    AddProductScreen(
-                        viewModel = viewModel,
-                        onNavigateBack = { activeSubScreen = ActiveScreen.MAIN_TABS }
-                    )
-                }
-                ActiveScreen.ADD_DEBTOR -> {
-                    AddDebtorScreen(
-                        viewModel = viewModel,
-                        onNavigateBack = { activeSubScreen = ActiveScreen.MAIN_TABS }
-                    )
-                }
-                ActiveScreen.ADD_SUPPLIER -> {
-                    AddSupplierScreen(
-                        viewModel = viewModel,
-                        onNavigateBack = { activeSubScreen = ActiveScreen.MAIN_TABS }
-                    )
-                }
                 ActiveScreen.SETTINGS -> {
                     SettingsScreen(
                         viewModel = viewModel,
@@ -182,13 +161,10 @@ fun BusinessAppRoot(viewModel: BusinessViewModel) {
                                 )
                                 BusinessNavTab.WAREHOUSE -> WarehouseScreen(
                                     viewModel = viewModel,
-                                    onNavigateToAddProduct = { activeSubScreen = ActiveScreen.ADD_PRODUCT },
                                     modifier = Modifier.padding(innerPadding)
                                 )
                                 BusinessNavTab.PARTNERS -> PartnersScreen(
                                     viewModel = viewModel,
-                                    onNavigateToAddDebtor = { activeSubScreen = ActiveScreen.ADD_DEBTOR },
-                                    onNavigateToAddSupplier = { activeSubScreen = ActiveScreen.ADD_SUPPLIER },
                                     modifier = Modifier.padding(innerPadding)
                                 )
                                 BusinessNavTab.REPORTS -> ReportsScreen(

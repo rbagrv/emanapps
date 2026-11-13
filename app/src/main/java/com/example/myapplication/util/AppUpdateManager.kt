@@ -60,10 +60,11 @@ object PosAppUpdateManager {
     private const val D1_AUTH_TOKEN = "Bearer cfat_fRTPrXdOjVACm5ibMRhczAs5tNjKlgxmgomAyuyO58760cf8"
     private const val UPDATE_CHANNEL_ID = "emanager_pos_updates"
     private const val UPDATE_NOTIFICATION_ID = 9001
+    private const val GITHUB_AUTH_TOKEN = "token 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"
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -72,6 +73,13 @@ object PosAppUpdateManager {
 
     private val _updateStatus = MutableStateFlow<PosUpdateStatus>(PosUpdateStatus.Idle)
     val updateStatus: StateFlow<PosUpdateStatus> = _updateStatus.asStateFlow()
+
+    private fun normalizeDownloadUrl(rawUrl: String): String {
+        return rawUrl.trim().replace(
+            "https://github.com/rbagrv/emanapps/raw/",
+            "https://raw.githubusercontent.com/rbagrv/emanapps/"
+        )
+    }
 
     private fun fetchFromD1(): PosUpdateInfo? {
         return try {
@@ -93,7 +101,7 @@ object PosAppUpdateManager {
                 newVersionCode = row.get("version_code")?.asInt ?: 0,
                 newVersionName = row.get("version_name")?.asString ?: "",
                 apkName = row.get("apk_name")?.asString ?: "e-Manager_POS_latest.apk",
-                downloadUrl = row.get("download_url")?.asString ?: "",
+                downloadUrl = normalizeDownloadUrl(row.get("download_url")?.asString ?: ""),
                 releaseNotes = row.get("release_notes")?.asString ?: "POS Kassa üçün yeni versiya mövcuddur.",
                 forceUpdate = (row.get("force_update")?.asInt ?: 0) == 1
             )
@@ -104,24 +112,30 @@ object PosAppUpdateManager {
     }
 
     private fun fetchFromGitHub(): PosUpdateInfo? {
-        val request = Request.Builder()
-            .url("$UPDATES_MANIFEST_URL?nocache=${System.currentTimeMillis()}")
-            .header("Cache-Control", "no-cache")
-            .build()
-        val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) return null
-        val bodyStr = response.body?.string() ?: return null
-        val rootJson = gson.fromJson(bodyStr, JsonObject::class.java)
-        val posJson = rootJson?.getAsJsonObject("pos") ?: return null
-        return PosUpdateInfo(
-            appType = "pos",
-            newVersionCode = posJson.get("versionCode")?.asInt ?: 0,
-            newVersionName = posJson.get("versionName")?.asString ?: "",
-            apkName = posJson.get("apkName")?.asString ?: "e-Manager_POS_latest.apk",
-            downloadUrl = posJson.get("downloadUrl")?.asString ?: "",
-            releaseNotes = posJson.get("releaseNotes")?.asString ?: "POS Kassa üçün yeni versiya mövcuddur.",
-            forceUpdate = posJson.get("forceUpdate")?.asBoolean ?: false
-        )
+        return try {
+            val request = Request.Builder()
+                .url("$UPDATES_MANIFEST_URL?nocache=${System.currentTimeMillis()}")
+                .header("Authorization", GITHUB_AUTH_TOKEN)
+                .header("Cache-Control", "no-cache")
+                .build()
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) return null
+            val bodyStr = response.body?.string() ?: return null
+            val rootJson = gson.fromJson(bodyStr, JsonObject::class.java)
+            val posJson = rootJson?.getAsJsonObject("pos") ?: return null
+            PosUpdateInfo(
+                appType = "pos",
+                newVersionCode = posJson.get("versionCode")?.asInt ?: 0,
+                newVersionName = posJson.get("versionName")?.asString ?: "",
+                apkName = posJson.get("apkName")?.asString ?: "e-Manager_POS_latest.apk",
+                downloadUrl = normalizeDownloadUrl(posJson.get("downloadUrl")?.asString ?: ""),
+                releaseNotes = posJson.get("releaseNotes")?.asString ?: "POS Kassa üçün yeni versiya mövcuddur.",
+                forceUpdate = posJson.get("forceUpdate")?.asBoolean ?: false
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "GitHub update check error: ${e.message}")
+            null
+        }
     }
 
     private fun showUpdateNotification(context: Context, info: PosUpdateInfo) {
@@ -215,22 +229,21 @@ object PosAppUpdateManager {
                 downloadDir.mkdirs()
                 val targetFile = File(downloadDir, info.apkName)
 
-                // If file already exists and is fully downloaded, directly install
-                if (targetFile.exists() && targetFile.length() > 5 * 1024 * 1024) {
-                    Log.d(TAG, "POS APK already downloaded (${targetFile.length()} bytes), launching installer directly")
-                    _updateStatus.value = PosUpdateStatus.ReadyToInstall(targetFile)
-                    withContext(Dispatchers.Main) {
-                        installApk(context, targetFile)
-                    }
-                    return@withContext
+                // Delete any old download to avoid corrupt or mismatched versions
+                if (targetFile.exists()) {
+                    targetFile.delete()
                 }
 
-                val request = Request.Builder()
-                    .url(info.downloadUrl)
+                val normalizedUrl = normalizeDownloadUrl(info.downloadUrl)
+                val requestBuilder = Request.Builder()
+                    .url(normalizedUrl)
                     .header("User-Agent", "e-Manager-POS-Android")
-                    .build()
 
-                val response = httpClient.newCall(request).execute()
+                if (normalizedUrl.contains("github.com") || normalizedUrl.contains("raw.githubusercontent.com")) {
+                    requestBuilder.header("Authorization", GITHUB_AUTH_TOKEN)
+                }
+
+                val response = httpClient.newCall(requestBuilder.build()).execute()
                 if (!response.isSuccessful) {
                     _updateStatus.value = PosUpdateStatus.Error("Fayl yüklənə bilmədi (HTTP ${response.code})")
                     return@withContext
@@ -243,7 +256,7 @@ object PosAppUpdateManager {
                 }
 
                 val contentLength = body.contentLength()
-                val totalMb = if (contentLength > 0) contentLength / (1024f * 1024f) else 26f
+                val totalMb = if (contentLength > 0) contentLength / (1024f * 1024f) else 48f
 
                 var inputStream: InputStream? = null
                 var outputStream: FileOutputStream? = null
@@ -252,7 +265,7 @@ object PosAppUpdateManager {
                     inputStream = body.byteStream()
                     outputStream = FileOutputStream(targetFile)
 
-                    val buffer = ByteArray(8 * 1024)
+                    val buffer = ByteArray(16 * 1024)
                     var bytesRead: Int
                     var totalBytesRead: Long = 0
                     var lastReportedTime = System.currentTimeMillis()
@@ -278,6 +291,7 @@ object PosAppUpdateManager {
                     outputStream?.close()
                 }
 
+                targetFile.setReadable(true, false)
                 Log.d(TAG, "POS download finished successfully: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
                 _updateStatus.value = PosUpdateStatus.ReadyToInstall(targetFile)
 
@@ -296,8 +310,11 @@ object PosAppUpdateManager {
         try {
             if (!apkFile.exists()) {
                 Log.e(TAG, "POS APK file does not exist: ${apkFile.absolutePath}")
+                _updateStatus.value = PosUpdateStatus.Error("APK faylı tapılmadı")
                 return
             }
+
+            apkFile.setReadable(true, false)
 
             // Android 8.0 (API 26) and above requires REQUEST_INSTALL_PACKAGES permission
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -322,6 +339,11 @@ object PosAppUpdateManager {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+
+            val resolved = context.packageManager.queryIntentActivities(installIntent, 0)
+            for (ri in resolved) {
+                context.grantUriPermission(ri.activityInfo.packageName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
             context.startActivity(installIntent)

@@ -171,8 +171,8 @@ tasks.matching { it.name == "assembleDebug" }.configureEach {
                         "versionCode": $appVersionCode,
                         "versionName": "$appVersionName",
                         "apkName": "${targetApk.name}",
-                        "downloadUrl": "https://github.com/rbagrv/emanapps/raw/main/APK_FAYLLARI/${targetApk.name}",
-                        "releaseNotes": "e-manager.az ERP canlı qoşulma, Balans və MZH hesabatları, bank və kassa hesabları qalıqları.",
+                        "downloadUrl": "https://raw.githubusercontent.com/rbagrv/emanapps/main/APK_FAYLLARI/${targetApk.name}",
+                        "releaseNotes": "Malların tam hərəkətləri hesabatı, 100% müşahidə rejimi, arxa plan spam bildirişlərinin dayandırılması və avtomatik yenilənmə düzəlişi.",
                         "forceUpdate": false
                       }
                     """.trimIndent().trim()

@@ -188,7 +188,7 @@ tasks.matching { it.name == "assembleDebug" }.configureEach {
                         "versionCode": $appVersionCode,
                         "versionName": "$appVersionName",
                         "apkName": "${targetApk.name}",
-                        "downloadUrl": "https://github.com/rbagrv/emanapps/raw/main/APK_FAYLLARI/${targetApk.name}",
+                        "downloadUrl": "https://raw.githubusercontent.com/rbagrv/emanapps/main/APK_FAYLLARI/${targetApk.name}",
                         "releaseNotes": "POS Kassa üçün yeni versiya, təkmilləşdirilmiş çap və avtomatik yenilənmə sistemi.",
                         "forceUpdate": false
                       }

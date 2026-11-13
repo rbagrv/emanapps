@@ -216,6 +216,12 @@ fun ReportsScreen(
                     }
                 }
 
+                ReportType.STOCK_MOVEMENT -> {
+                    item {
+                        StockMovementsSection(viewModel = viewModel)
+                    }
+                }
+
                 ReportType.MZH -> {
                     item { ProfitAndLossSection(pnl = pnlReport, period = selectedPeriod) }
                 }
@@ -844,5 +850,254 @@ fun PaymentStatItem(color: Color, label: String, amount: Double) {
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
         )
+    }
+}
+
+// =================================================================
+// 6. Stock Movements Section
+// =================================================================
+
+@Composable
+fun StockMovementsSection(viewModel: BusinessViewModel) {
+    val movements by viewModel.filteredStockMovements.collectAsState()
+    val allMovements by viewModel.stockMovements.collectAsState()
+    val searchQuery by viewModel.stockMovementSearchQuery.collectAsState()
+    val selectedTypeFilter by viewModel.stockMovementTypeFilter.collectAsState()
+
+    val totalPurchases = remember(allMovements) {
+        allMovements.filter { it.movementType == StockMovementType.PURCHASE }.sumOf { it.totalPrice }
+    }
+    val totalSales = remember(allMovements) {
+        allMovements.filter { it.movementType == StockMovementType.SALE }.sumOf { it.totalPrice }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Summary KPIs
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Cəmi Hərəkət", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "${allMovements.size} əməliyyat",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Qəbul / Alış", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "₼ ${String.format(Locale.US, "%,.2f", totalPurchases)}",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = EmeraldPrimary
+                    )
+                }
+            }
+
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Satış / Çıxış", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "₼ ${String.format(Locale.US, "%,.2f", totalSales)}",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = InfoBlue
+                    )
+                }
+            }
+        }
+
+        // Search Bar
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { viewModel.stockMovementSearchQuery.value = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Məhsul adı, qaimə və ya tərəfdaş...", fontSize = 13.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = EmeraldPrimary) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { viewModel.stockMovementSearchQuery.value = "" }) {
+                        Icon(Icons.Default.Clear, contentDescription = null)
+                    }
+                }
+            },
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+
+        // Type filter chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = selectedTypeFilter == null,
+                onClick = { viewModel.stockMovementTypeFilter.value = null },
+                label = { Text("Hamısı", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = EmeraldPrimary,
+                    selectedLabelColor = Color.White
+                )
+            )
+            FilterChip(
+                selected = selectedTypeFilter == StockMovementType.SALE,
+                onClick = {
+                    viewModel.stockMovementTypeFilter.value =
+                        if (selectedTypeFilter == StockMovementType.SALE) null else StockMovementType.SALE
+                },
+                label = { Text("Yalnız Satışlar", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = InfoBlue,
+                    selectedLabelColor = Color.White
+                )
+            )
+            FilterChip(
+                selected = selectedTypeFilter == StockMovementType.PURCHASE,
+                onClick = {
+                    viewModel.stockMovementTypeFilter.value =
+                        if (selectedTypeFilter == StockMovementType.PURCHASE) null else StockMovementType.PURCHASE
+                },
+                label = { Text("Yalnız Alışlar", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = EmeraldPrimary,
+                    selectedLabelColor = Color.White
+                )
+            )
+        }
+
+        if (movements.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (searchQuery.isNotEmpty()) "Axtarışa uyğun mal hərəkəti tapılmadı" else "Malların hərəkəti qeydə alınmayıb",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp
+                )
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                movements.forEach { m ->
+                    StockMovementCard(movement = m)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StockMovementCard(movement: StockMovement) {
+    val badgeColor = when (movement.movementType) {
+        StockMovementType.PURCHASE -> EmeraldPrimary
+        StockMovementType.SALE -> InfoBlue
+        StockMovementType.RETURN -> WarningOrange
+        StockMovementType.WRITE_OFF -> LossRed
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = badgeColor.copy(alpha = 0.15f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    val icon = when (movement.movementType) {
+                        StockMovementType.PURCHASE -> Icons.Default.ArrowDownward
+                        StockMovementType.SALE -> Icons.Default.ArrowUpward
+                        StockMovementType.RETURN -> Icons.Default.Replay
+                        StockMovementType.WRITE_OFF -> Icons.Default.DeleteOutline
+                    }
+                    Icon(imageVector = icon, contentDescription = null, tint = badgeColor, modifier = Modifier.size(20.dp))
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = movement.productName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    val qtyPrefix = if (movement.movementType == StockMovementType.PURCHASE) "+" else "-"
+                    Text(
+                        text = "$qtyPrefix${String.format(Locale.US, "%.1f", movement.quantity)} ${movement.unit}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = badgeColor
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${movement.date} • ${movement.partnerOrChannel}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Text(
+                        text = "₼ ${String.format(Locale.US, "%.2f", movement.totalPrice)}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                if (movement.documentNumber.isNotBlank()) {
+                    Text(
+                        text = "Sənəd: ${movement.documentNumber}",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
     }
 }

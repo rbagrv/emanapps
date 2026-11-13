@@ -33,17 +33,18 @@ import java.util.Locale
 @Composable
 fun WarehouseScreen(
     viewModel: BusinessViewModel,
-    onNavigateToAddProduct: () -> Unit,
+    onNavigateToAddProduct: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val items by viewModel.warehouseItems.collectAsState()
     val summary by viewModel.warehouseSummary.collectAsState()
+    val allMovements by viewModel.stockMovements.collectAsState()
     val searchQuery by viewModel.warehouseSearchQuery.collectAsState()
     val hideNegativeStock by viewModel.hideNegativeStock.collectAsState()
     val hideZeroStock by viewModel.hideZeroStock.collectAsState()
     val onlyLowStock by viewModel.onlyLowStock.collectAsState()
     val context = LocalContext.current
-    var selectedItemForStockEdit by remember { mutableStateOf<WarehouseItem?>(null) }
+    var selectedItemForDetails by remember { mutableStateOf<WarehouseItem?>(null) }
     var sortOrder by remember { mutableStateOf("name_asc") }
 
     val sortedItems = remember(items, sortOrder) {
@@ -65,7 +66,7 @@ fun WarehouseScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "e-manager.az ERP Canlı Qalıqlar",
+                            text = "e-manager.az ERP Canlı Qalıqlar (Müşahidə)",
                             fontSize = 11.sp,
                             color = EmeraldPrimary,
                             fontWeight = FontWeight.Medium
@@ -99,25 +100,8 @@ fun WarehouseScreen(
                             tint = EmeraldPrimary
                         )
                     }
-
-                    IconButton(onClick = onNavigateToAddProduct) {
-                        Icon(
-                            imageVector = Icons.Default.AddBox,
-                            contentDescription = "Yeni Məhsul Səhifəsi",
-                            tint = EmeraldPrimary
-                        )
-                    }
                 }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNavigateToAddProduct,
-                containerColor = EmeraldPrimary,
-                contentColor = Color.White
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Yeni Məhsul")
-            }
         },
         modifier = modifier
     ) { innerPadding ->
@@ -349,7 +333,7 @@ fun WarehouseScreen(
                 items(sortedItems, key = { it.id }) { item ->
                     WarehouseItemCard(
                         item = item,
-                        onEditStock = { selectedItemForStockEdit = item }
+                        onClickItem = { selectedItemForDetails = item }
                     )
                 }
             }
@@ -358,65 +342,147 @@ fun WarehouseScreen(
         }
     }
 
-    // EDIT STOCK DIALOG
-    selectedItemForStockEdit?.let { targetItem ->
-        var updatedStockInput by remember { mutableStateOf(targetItem.stock.toString()) }
+    // PRODUCT DETAILS & STOCK MOVEMENTS DIALOG (OBSERVATION ONLY)
+    selectedItemForDetails?.let { targetItem ->
+        val itemMovements = remember(targetItem, allMovements) {
+            allMovements.filter { m ->
+                m.productName.contains(targetItem.name, ignoreCase = true) ||
+                        (targetItem.sku.isNotBlank() && m.productName.contains(targetItem.sku, ignoreCase = true)) ||
+                        (targetItem.barcode != null && m.documentNumber.contains(targetItem.barcode))
+            }
+        }
 
         AlertDialog(
-            onDismissRequest = { selectedItemForStockEdit = null },
+            onDismissRequest = { selectedItemForDetails = null },
             title = {
-                Text("Qalıq Miqdarını Düzəlt", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Column {
+                    Text(text = targetItem.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(
+                        text = "Kateqoriya: ${targetItem.categoryName} • ${targetItem.unit}",
+                        fontSize = 12.sp,
+                        color = EmeraldPrimary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = targetItem.name, fontWeight = FontWeight.Bold)
-                    Text(text = "Cari qalıq: ${targetItem.stock} ${targetItem.unit}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedTextField(
-                        value = updatedStockInput,
-                        onValueChange = { updatedStockInput = it },
-                        label = { Text("Yeni faktiki qalıq") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // KPI Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf(-10.0, -1.0, 1.0, 5.0, 10.0).forEach { delta ->
-                            val label = if (delta > 0) "+${delta.toInt()}" else "${delta.toInt()}"
-                            SuggestionChip(
-                                onClick = {
-                                    val cur = updatedStockInput.toDoubleOrNull() ?: targetItem.stock
-                                    val next = (cur + delta).coerceAtLeast(0.0)
-                                    updatedStockInput = if (next % 1.0 == 0.0) next.toInt().toString() else String.format(Locale.US, "%.1f", next)
-                                },
-                                label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                modifier = Modifier.weight(1f)
-                            )
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text("Faktiki Qalıq", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = "${String.format(Locale.US, "%.1f", targetItem.stock)} ${targetItem.unit}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = if (targetItem.stock <= 0) LossRed else EmeraldPrimary
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text("Satış Qiyməti", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = "₼ ${String.format(Locale.US, "%.2f", targetItem.salePrice)}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    // Stock movements history
+                    Text(
+                        text = "📦 Bu Məhsul Üzrə Hərəkətlər (${itemMovements.size})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    if (itemMovements.isEmpty()) {
+                        Text(
+                            text = "Son əməliyyatlarda bu məhsul üzrə hərəkət qeydə alınmayıb.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 240.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(itemMovements) { m ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = "${m.movementType.title} • ${m.date}",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp,
+                                                color = if (m.movementType == com.example.business.data.model.StockMovementType.PURCHASE) EmeraldPrimary else InfoBlue
+                                            )
+                                            Text(
+                                                text = m.partnerOrChannel,
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            val sign = if (m.movementType == com.example.business.data.model.StockMovementType.PURCHASE) "+" else "-"
+                                            Text(
+                                                text = "$sign${m.quantity} ${m.unit}",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = if (m.movementType == com.example.business.data.model.StockMovementType.PURCHASE) EmeraldPrimary else InfoBlue
+                                            )
+                                            Text(
+                                                text = "₼ ${String.format(Locale.US, "%.2f", m.totalPrice)}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
                 Button(
-                    onClick = {
-                        val num = updatedStockInput.toDoubleOrNull()
-                        if (num != null) {
-                            viewModel.updateProductStock(targetItem.id, num)
-                            Toast.makeText(context, "Qalıq yeniləndi!", Toast.LENGTH_SHORT).show()
-                        }
-                        selectedItemForStockEdit = null
-                    },
+                    onClick = { selectedItemForDetails = null },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
                 ) {
-                    Text("Yadda saxla")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedItemForStockEdit = null }) {
-                    Text("Ləğv et")
+                    Text("Bağla")
                 }
             }
         )
@@ -426,12 +492,12 @@ fun WarehouseScreen(
 @Composable
 fun WarehouseItemCard(
     item: WarehouseItem,
-    onEditStock: () -> Unit
+    onClickItem: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onEditStock() },
+            .clickable { onClickItem() },
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(2.dp)

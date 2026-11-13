@@ -124,6 +124,26 @@ class BusinessViewModel(
 
     val warehouseSummary: StateFlow<WarehouseSummary> = repository.warehouseSummary
 
+    // Stock Movements
+    val stockMovements: StateFlow<List<StockMovement>> = repository.stockMovements
+    val stockMovementSearchQuery = MutableStateFlow("")
+    val stockMovementTypeFilter = MutableStateFlow<StockMovementType?>(null)
+
+    val filteredStockMovements: StateFlow<List<StockMovement>> = combine(
+        repository.stockMovements,
+        stockMovementSearchQuery,
+        stockMovementTypeFilter
+    ) { list, query, typeFilter ->
+        list.filter { m ->
+            val matchesQuery = query.isBlank() ||
+                    m.productName.contains(query, ignoreCase = true) ||
+                    m.documentNumber.contains(query, ignoreCase = true) ||
+                    m.partnerOrChannel.contains(query, ignoreCase = true)
+            val matchesType = typeFilter == null || m.movementType == typeFilter
+            matchesQuery && matchesType
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     // Reports
     val selectedReportPeriod = MutableStateFlow(ReportPeriod.THIS_MONTH)
     val selectedReportType = MutableStateFlow(ReportType.TURNOVER)

@@ -8,7 +8,7 @@ class BusinessApp : Application() {
         super.onCreate()
         instance = this
         com.example.business.util.NotificationHelper.createNotificationChannel(this)
-        com.example.business.util.BackgroundAlertReceiver.schedulePeriodicAlerts(this)
+        com.example.business.util.BackgroundAlertReceiver.cancelPeriodicAlerts(this)
     }
 
     companion object {

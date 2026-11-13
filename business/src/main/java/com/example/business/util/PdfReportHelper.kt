@@ -107,6 +107,22 @@ object PdfReportHelper {
                     drawKeyValueRow(canvas, paint, "Kartla Satışlar:", "₼ ${formatMoney(periodReport.cardSales)}", yPos)
                 }
 
+                ReportType.STOCK_MOVEMENT -> {
+                    paint.color = Color.parseColor("#059669")
+                    paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    canvas.drawText("MALLARIN DÖVRİYYƏ VƏ HƏRƏKƏT İCMALI", 40f, yPos, paint)
+                    yPos += 20f
+                    drawKeyValueRow(canvas, paint, "Cəmi Satış Hərəkəti (Dövriyyə):", "₼ ${formatMoney(periodReport.totalSales)}", yPos)
+                    yPos += 20f
+                    drawKeyValueRow(canvas, paint, "Cəmi Qəbul / Alış Hərəkəti:", "₼ ${formatMoney(periodReport.totalPurchases)}", yPos)
+                    yPos += 20f
+                    drawKeyValueRow(canvas, paint, "Faktiki Anbar Qalıq Dəyəri:", "₼ ${formatMoney(balanceReport.inventory)}", yPos)
+                    yPos += 20f
+                    drawKeyValueRow(canvas, paint, "Ümumi Əməliyyat / Çek Sayı:", "${periodReport.checkCount} əməliyyat", yPos)
+                    yPos += 24f
+                    drawHighlightRow(canvas, paint, "HƏRƏKƏT NƏTİCƏSİ (DÖVRİYYƏ):", "₼ ${formatMoney(periodReport.totalSales)} (Anbar: ₼ ${formatMoney(balanceReport.inventory)})", yPos, pageWidth)
+                }
+
                 ReportType.MZH -> {
                     drawKeyValueRow(canvas, paint, "1. Ümumi Satış Gəlirləri:", "₼ ${formatMoney(pnlReport.revenue)}", yPos)
                     yPos += 22f
